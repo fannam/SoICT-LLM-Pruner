@@ -5,6 +5,12 @@ A tri-level framework for structured pruning of Large Language Models (LLMs). Cu
 ## Installation
 
 ```bash
+git clone https://github.com/fannam/SoICT-LLM-Pruner.git
+```
+
+Move to SoICT-LLM-Pruner folder
+
+```bash
 pip install -e .
 ```
 
