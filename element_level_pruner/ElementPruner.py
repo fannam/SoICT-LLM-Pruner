@@ -344,7 +344,7 @@ class ElementPruner:
         return pruned_model
 
     def prune_embeddings(self, embedding_importance, target_embedding_size):
-        if isinstance(self.model)!=LlamaForCausalLM and isinstance(self.model)!=Qwen2ForCausalLM:
+        if not isinstance(self.model, LlamaForCausalLM) and not isinstance(self.model, Qwen2ForCausalLM):
             print(f"Warning: Not supported model type! Please use LlamaForCausalLM or Qwen2ForCausalLM")
             return None
         if target_embedding_size >= self.original_hidden_size:
