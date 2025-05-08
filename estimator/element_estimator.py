@@ -5,7 +5,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from collections import defaultdict
 from tqdm.auto import tqdm
 
-class ActivationElementEstimator:
+class ActivationElementImportanceEstimator:
     """
     Estimate activation-based importance for:
       - Attention heads: F_head^(i) = aggregated per-head norm over activations

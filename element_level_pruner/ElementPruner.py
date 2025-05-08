@@ -7,7 +7,6 @@ from typing import Dict, List
 
 class ElementPruner:
     def __init__(self, original_model, dtype, device='cuda'):
-        # store original model & config, derive dims
         self.model = original_model
         self.device = device
         self.original_config = original_model.config

@@ -31,8 +31,7 @@ setup(
         "torch>=1.9.0",
         "transformers>=4.0.0",
         "numpy>=1.19.0",
-        # add other deps you use, e.g.:
-        # "tqdm>=4.0.0",
+        "tqdm>=4.0.0",
     ],
     python_requires=">=3.7",
     classifiers=[
