@@ -9,7 +9,7 @@ if readme_path.exists():
     long_description = readme_path.read_text(encoding="utf-8")
 
 setup(
-    name="model-importance-estimator",
+    name="soict-llm-pruner",
     version="0.1.0",
     description="A tri-level framework for structured pruning (Currently supports Llama and Qwen2)",
     author="Your Name",
@@ -19,6 +19,9 @@ setup(
         "torch>=2.0.0",
         "transformers>=4.30.0",
         "tqdm>=4.65.0",
+        "datasets>=2.14.0",
+        "numpy>=1.24.0",
+        "accelerate>=0.4.10",
     ],
     python_requires=">=3.8",
     classifiers=[
