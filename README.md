@@ -16,9 +16,9 @@ pip install -e .
 
 ## Features
 
-- **Element-level Pruning**: Prune individual attention heads and MLP neurons
-- **Layer-level Pruning**: Remove entire attention or MLP layers
-- **Block-level Pruning**: Remove contiguous blocks of layers
+- **Element-level Pruning**: Prune individual attention heads, attention groups, MLP neurons and embedding channels
+- **Layer-level Pruning**: Remove entire attention or MLP (Feed forward) layers
+- **Block-level Pruning**: Remove contiguous Decoder blocks
 - Support for Llama and Qwen2 models
 - Multiple importance estimation methods
 
@@ -28,17 +28,17 @@ pip install -e .
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from estimator.element_estimator import ActivationElementImportanceEstimator
-from estimator.layer_estimator import LayerImportanceEstimator
-from estimator.block_estimator import SimilarityBlockImportanceEstimator
+from estimator.element_estimator import Llama3ActivationElementEstimator
+from estimator.layer_estimator import Llama3SimilarityLayerEstimator
+from estimator.block_estimator import Llama3SimilarityBlockEstimator
 ```
 
 ### 2. Load Model and Prepare Data
 
 ```python
 # Load model and tokenizer
-model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-2-7b")
-tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b")
+model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1b")
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1b")
 
 # Prepare your calibration dataset
 # The dataset should be a list of texts or a DataLoader
@@ -76,15 +76,13 @@ layer_importance = layer_estimator.estimate(dataloader)
 #### Block-level Importance
 
 ```python
-# Initialize estimator with desired block size
+# Initialize estimator with desired contiguous block size
 block_estimator = SimilarityBlockImportanceEstimator(model, block_size=1)
 
 # Estimate importance of contiguous blocks
 block_importance = block_estimator.estimate(dataloader)
 # Returns: [imp0, imp1, ...] for each possible block start position
 ```
-
-## Advanced Usage
 
 ### Custom Aggregation Methods
 
@@ -104,17 +102,20 @@ head_importance = element_estimator.estimate_attention_heads(agg="var")
 After obtaining importance scores, you can use them to prune the model:
 
 ```python
-# Example: Prune least important attention heads
-threshold = 0.5  # Keep top 50% of heads
-for layer_idx, importance in head_importance.items():
-    mask = importance > torch.quantile(importance, threshold)
-    # Apply mask to prune heads
+from pruner.elemet_level_pruner.ElementPruner import Llama3ElementPruner
+from pruner.layer_level_pruner.LayerPruner import Llama3LayerPruner
+from pruner.block_level_pruner.BlockPruner import Llama3BlockPruner
+
+element_pruner = Llma3ElementPruner(model, 'cuda')
+
+pruned_model = element_pruner.prune_attention_group(head_importance=head_importance, target_group=7)
+
 ```
 
 ## Supported Models
 
-- Llama-3 (all sizes)
-- Qwen2 (all sizes)
+- Llama-3 
+- Qwen2 
 
 ## Requirements
 

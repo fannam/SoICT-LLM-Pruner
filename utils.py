@@ -12,6 +12,9 @@ def calculate_importance(x: torch.Tensor, y: torch.Tensor) -> float:
     cos_sim = torch.nan_to_num(cos_sim, nan=1.0)
     return 1.0 - cos_sim.mean().item()
 
+def calculate_embedding_channels_mean_score(embedding_importance):
+    pass
+
 class FeedForwardPasser(torch.nn.Module):
     """
     Identity module for MLP layers. Returns hidden_states unmodified.
