@@ -500,6 +500,7 @@ class Qwen2ElementPruner:
         print("Creating new model configuration")
         new_config = copy.deepcopy(self.original_config)
         new_config.num_attention_heads = target_num_attention_heads
+        new_config.head_dim = self.head_dim
         new_model = None
         if isinstance(self.model, Qwen2ForCausalLM):
             new_model = Qwen2ForCausalLM(new_config)
@@ -582,6 +583,7 @@ class Qwen2ElementPruner:
         new_config = copy.deepcopy(self.original_config)
         new_config.num_attention_heads = target_group * query_head_per_group
         new_config.num_key_value_heads = target_group
+        new_config.head_dim = self.head_dim
         new_model = None
         print("Creating pruned model...")
         if isinstance(self.model, Qwen2ForCausalLM):
@@ -667,7 +669,7 @@ class Qwen2ElementPruner:
         for key in new_state_dict.keys():
             parts = key.split('.')
             if parts[:2] == ['model','layers']:
-                print("Found supported model!")
+                #print("Found supported model!")
                 layer_idx = int(parts[2])
                 attn = self.model.model.layers[layer_idx].self_attn
                 if 'self_attn.q_proj.weight' in key:
@@ -711,6 +713,7 @@ class Qwen2ElementPruner:
             return None
         pruned_model = copy.deepcopy(self.model).to(self.device)
         pruned_model.config.intermediate_size = target_num_neurons
+        pruned_model.config.head_dim = self.head_dim
         keep = {}
         print("Checking size...")
         for idx, scores in neuron_importance.items():
