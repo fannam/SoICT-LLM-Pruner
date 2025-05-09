@@ -12,8 +12,10 @@ def calculate_importance(x: torch.Tensor, y: torch.Tensor) -> float:
     cos_sim = torch.nan_to_num(cos_sim, nan=1.0)
     return 1.0 - cos_sim.mean().item()
 
-def calculate_embedding_channels_mean_score(embedding_importance):
-    pass
+def calculate_embedding_channels_global_score(embedding_importance):
+    all_scores = torch.stack(list(embedding_importance.values()), dim=0)
+    global_score = all_scores.sum(dim=0)
+    return global_score
 
 class FeedForwardPasser(torch.nn.Module):
     """

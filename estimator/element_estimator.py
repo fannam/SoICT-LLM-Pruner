@@ -12,9 +12,8 @@ class Llama3ActivationElementEstimator:
       - MLP neurons:     F_neuron^(i) = aggregated neuron activations at gate_proj
     Aggregation methods supported: "sum", "mean", "l2", "var".
     """
-    def __init__(self, model: nn.Module, dataloader, device: str = "cuda"):
+    def __init__(self, model: nn.Module, device: str = "cuda"):
         self.model = model.to(device)
-        self.dataloader = dataloader
         self.device = device
         cfg = copy.deepcopy(model.config)
         # derive attention parameters
@@ -88,7 +87,7 @@ class Llama3ActivationElementEstimator:
 
         return importance
 
-    def estimate_mlp_neurons(self, agg: str = "l2"):
+    def estimate_mlp_neurons(self, dataloader, agg: str = "l2"):
         """
         Compute activation-based importance for MLP intermediate neurons.
         Hooks the input to each layer.mlp.gate_proj and aggregates
@@ -127,7 +126,7 @@ class Llama3ActivationElementEstimator:
             hooks.append(hook)
 
         with torch.no_grad():
-            for batch in tqdm(self.dataloader, desc='Estimating MLP neuron importance'):
+            for batch in tqdm(dataloader, desc='Estimating MLP neuron importance'):
                 inputs = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**inputs)
 
@@ -141,7 +140,7 @@ class Llama3ActivationElementEstimator:
 
         return importance
 
-    def estimate_embedding_channels(self, agg: str = "l2"):
+    def estimate_embedding_channels(self, dataloader,agg: str = "l2"):
         """
         Compute activation-based importance for embedding channels using:
           - input_layernorm
@@ -193,7 +192,7 @@ class Llama3ActivationElementEstimator:
 
         # run forward
         with torch.no_grad():
-            for batch in tqdm(self.dataloader, desc="Estimating embedding channels importance"):
+            for batch in tqdm(dataloader, desc="Estimating embedding channels importance"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**batch)
 
@@ -215,9 +214,8 @@ class Qwen2ActivationElementEstimator:
       - MLP neurons:     F_neuron^(i) = aggregated neuron activations at gate_proj
     Aggregation methods supported: "sum", "mean", "l2", "var".
     """
-    def __init__(self, model: nn.Module, dataloader, device: str = "cuda"):
+    def __init__(self, model: nn.Module, device: str = "cuda"):
         self.model = model.to(device)
-        self.dataloader = dataloader
         self.device = device
         cfg = copy.deepcopy(model.config)
         # derive attention parameters
@@ -291,7 +289,7 @@ class Qwen2ActivationElementEstimator:
 
         return importance
 
-    def estimate_mlp_neurons(self, agg: str = "l2"):
+    def estimate_mlp_neurons(self, dataloader, agg: str = "l2"):
         """
         Compute activation-based importance for MLP intermediate neurons.
         Hooks the input to each layer.mlp.gate_proj and aggregates
@@ -330,7 +328,7 @@ class Qwen2ActivationElementEstimator:
             hooks.append(hook)
 
         with torch.no_grad():
-            for batch in tqdm(self.dataloader, desc='Estimating MLP neuron importance'):
+            for batch in tqdm(dataloader, desc='Estimating MLP neuron importance'):
                 inputs = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**inputs)
 
@@ -344,7 +342,7 @@ class Qwen2ActivationElementEstimator:
 
         return importance
 
-    def estimate_embedding_channels(self, agg: str = "l2"):
+    def estimate_embedding_channels(self, dataloader, agg: str = "l2"):
         """
         Compute activation-based importance for embedding channels using:
           - input_layernorm
@@ -396,7 +394,7 @@ class Qwen2ActivationElementEstimator:
 
         # run forward
         with torch.no_grad():
-            for batch in tqdm(self.dataloader, desc="Estimating embedding channels importance"):
+            for batch in tqdm(dataloader, desc="Estimating embedding channels importance"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**batch)
 
