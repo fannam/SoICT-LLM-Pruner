@@ -24,7 +24,7 @@ class Llama3ActivationElementEstimator:
         first_mlp = model.model.layers[0].mlp
         self.intermediate_size = first_mlp.gate_proj.out_features
 
-    def estimate_attention_heads(self, agg: str = "l2"):
+    def estimate_attention_heads(self, dataloader, agg: str = "l2"):
         """
         Compute activation-based importance for attention heads.
         Hooks the input to each layer.self_attn.o_proj, computes per-head L2 norms,
@@ -71,7 +71,7 @@ class Llama3ActivationElementEstimator:
 
         # forward pass
         with torch.no_grad():
-            for batch in tqdm(self.dataloader, desc="Estimating attention heads importance"):
+            for batch in tqdm(dataloader, desc="Estimating attention heads importance"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**batch)
 
@@ -226,7 +226,7 @@ class Qwen2ActivationElementEstimator:
         first_mlp = model.model.layers[0].mlp
         self.intermediate_size = first_mlp.gate_proj.out_features
 
-    def estimate_attention_heads(self, agg: str = "l2"):
+    def estimate_attention_heads(self, dataloader, agg: str = "l2"):
         """
         Compute activation-based importance for attention heads.
         Hooks the input to each layer.self_attn.o_proj, computes per-head L2 norms,
@@ -273,7 +273,7 @@ class Qwen2ActivationElementEstimator:
 
         # forward pass
         with torch.no_grad():
-            for batch in tqdm(self.dataloader, desc="Estimating attention heads importance"):
+            for batch in tqdm(dataloader, desc="Estimating attention heads importance"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**batch)
 
