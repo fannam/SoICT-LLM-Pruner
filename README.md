@@ -28,7 +28,7 @@ pip install -e .
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from estimator.element_estimator import Llama3ActivationElementEstimator
+from estimator.element_estimator import 
 from estimator.layer_estimator import Llama3SimilarityLayerEstimator
 from estimator.block_estimator import Llama3SimilarityBlockEstimator
 ```
@@ -50,7 +50,7 @@ tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1b")
 
 ```python
 # Initialize estimator
-element_estimator = ActivationElementImportanceEstimator(model, dataloader)
+element_estimator = Llama3ActivationElementEstimator(model, dataloader)
 
 # Estimate attention head importance
 head_importance = element_estimator.estimate_attention_heads(agg="l2")
@@ -66,7 +66,7 @@ embedding_importance = element_estimator.estimate_embedding_channels(agg="l2")
 
 ```python
 # Initialize estimator
-layer_estimator = LayerImportanceEstimator(model)
+layer_estimator = Llama3SimilarityLayerEstimator(model)
 
 # Estimate importance of attention and MLP layers
 layer_importance = layer_estimator.estimate(dataloader)
@@ -77,7 +77,7 @@ layer_importance = layer_estimator.estimate(dataloader)
 
 ```python
 # Initialize estimator with desired contiguous block size
-block_estimator = SimilarityBlockImportanceEstimator(model, block_size=1)
+block_estimator = Llama3SimilarityBlockEstimator(model, block_size=1)
 
 # Estimate importance of contiguous blocks
 block_importance = block_estimator.estimate(dataloader)
@@ -114,7 +114,7 @@ pruned_model = element_pruner.prune_attention_group(head_importance=head_importa
 
 ## Supported Models
 
-- Llama-3 
+- Llama3
 - Qwen2 
 
 ## Requirements
