@@ -430,7 +430,7 @@ class Qwen2ElementPruner:
         self.device = device
         self.original_config = original_model.config
         self.head_dim = self.original_config.hidden_size//self.original_config.num_attention_heads
-        self.original_num_key_value_heads = self.original_config.num_kv_heads
+        self.original_num_key_value_heads = self.original_config.num_key_value_heads
         self.original_num_attention_heads = self.original_config.num_attention_heads
         self.original_num_layers = self.original_config.num_hidden_layers
         self.original_intermediate_size = self.original_config.intermediate_size
