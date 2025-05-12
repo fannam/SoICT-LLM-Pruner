@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 
 def calculate_importance(x: torch.Tensor, y: torch.Tensor) -> float:
     """Compute importance = 1 - mean_cosine_similarity between flattened x and y."""
@@ -40,3 +41,21 @@ class AttentionPasser(torch.nn.Module):
         # Return the hidden_states unmodified as the first output.
         # Return None for the attention weights (second expected output).
         return hidden_states, None
+    
+class DistilModel(nn.Module):
+    def __init__(self, student, student_dim, teacher_dim, teacher_kept_layers):
+        super().__init__()
+        self.student = student
+        self.teacher_kept_layers = teacher_kept_layers
+        # Create a projector per surviving teacher layer: Identity if dims match, else Linear
+        if student_dim == teacher_dim:
+            # No dimensional mismatch: feature dims align, skip projection
+            self.projectors = nn.ModuleList([nn.Identity() for _ in teacher_kept_layers])
+        else:
+            # Need to map student_dim -> teacher_dim
+            self.projectors = nn.ModuleList([
+                nn.Linear(student_dim, teacher_dim) for _ in teacher_kept_layers
+            ])
+
+    def forward(self, **kwargs):
+        return self.student(**kwargs, output_hidden_states=True)

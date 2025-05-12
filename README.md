@@ -28,7 +28,7 @@ pip install -e .
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from estimator.element_estimator import 
+from estimator.element_estimator import Llama3ActivationElementEstimator
 from estimator.layer_estimator import Llama3SimilarityLayerEstimator
 from estimator.block_estimator import Llama3SimilarityBlockEstimator
 ```

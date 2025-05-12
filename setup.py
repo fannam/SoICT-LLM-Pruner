@@ -12,7 +12,7 @@ setup(
     name="soict-llm-pruner",
     version="0.1.0",
     description="A tri-level framework for structured pruning (Currently supports Llama and Qwen2)",
-    author="Your Name",
+    author="Phan Hoang Nam",
     author_email="phanhoangnam234@gmail.com/nam.ph215434@sis.hust.edu.vn",
     packages=find_packages(),
     install_requires=[
