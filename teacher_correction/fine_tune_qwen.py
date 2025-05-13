@@ -1,5 +1,5 @@
 import os
-from datasets import load_dataset, Dataset # Import Dataset
+from datasets import load_dataset, Dataset 
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
@@ -9,7 +9,6 @@ from torch.optim import AdamW
 import wandb
 import math
 
-# --- Configuration ---
 WANDB_API_KEY = "" # 
 WANDB_PROJECT = "teacher_correction_wikitext"
 MODEL_NAME = "Qwen/Qwen2.5-0.5B"
@@ -17,8 +16,8 @@ DATASET_NAME = "EleutherAI/wikitext_document_level"
 DATASET_CONFIG = 'wikitext-103-raw-v1'
 OUTPUT_DIR = "qwen2.5-0.5b-finetuned-wikitext-pytorch"
 
-NUM_TRAIN_SAMPLES = 30000 # Target number of training samples *after* filtering
-MIN_TOKEN_LENGTH = 150 # Minimum token length for training samples
+NUM_TRAIN_SAMPLES = 30000 
+MIN_TOKEN_LENGTH = 150 
 
 MAX_LENGTH = 256
 PER_DEVICE_TRAIN_BATCH_SIZE = 4
@@ -33,16 +32,12 @@ try:
     wandb.login(key=WANDB_API_KEY)
 except Exception as e:
     print(f"Could not login to WandB: {e}. Check your API key.")
-    # Optionally exit or proceed without logging
-    # exit()
 
-# Initialize Accelerator
 accelerator = Accelerator(
     gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
     log_with="wandb",
 )
 
-# Init wandb AFTER accelerator init or pass config to accelerator
 accelerator.init_trackers(
     project_name=WANDB_PROJECT,
     config={
@@ -60,7 +55,6 @@ accelerator.init_trackers(
     init_kwargs={"wandb": {"name": "Qwen2.5-1.5B_WikiText103_Finetune_LR2e-5_BS2x8_Epoch2"}}
 )
 
-# Model and Tokenizer
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, torch_dtype=torch.bfloat16)
 
@@ -69,40 +63,33 @@ if tokenizer.pad_token is None:
     model.config.pad_token_id = tokenizer.eos_token_id
     print("Set pad_token to eos_token")
 
-# Dataset Loading
 print("Loading dataset...")
 dataset = load_dataset(DATASET_NAME, DATASET_CONFIG)
 print("Dataset loaded.")
 
-# --- Data Filtering and Selection Logic ---
 print("Processing and filtering training data...")
 
-# 1. Shuffle the original training data
 shuffled_train_dataset = dataset["train"].shuffle(seed=SEED)
 
-# 2. Tokenize without padding/truncation to get real length
 def get_token_length(examples):
-    # Tokenize without padding/truncation
     tokenized = tokenizer(examples['page'])
     return {'length': [len(ids) for ids in tokenized['input_ids']]}
 
 print("Calculating token lengths...")
-# Use with accelerator.main_process_first() if mapping involves downloads/caching
+
 with accelerator.main_process_first():
     dataset_with_length = shuffled_train_dataset.map(
         get_token_length,
         batched=True,
-        num_proc=os.cpu_count() # Use multiple processes for speed
+        num_proc=os.cpu_count() 
     )
 
-# 3. Filter based on token length
 print(f"Filtering for sequences longer than {MIN_TOKEN_LENGTH} tokens...")
 filtered_dataset = dataset_with_length.filter(
     lambda example: example['length'] > MIN_TOKEN_LENGTH,
-    num_proc=os.cpu_count() # Use multiple processes for speed
+    num_proc=os.cpu_count() 
 )
 
-# 4. Select the desired number of samples from the filtered dataset
 num_available = len(filtered_dataset)
 actual_num_train_samples = min(NUM_TRAIN_SAMPLES, num_available)
 
@@ -111,20 +98,15 @@ if actual_num_train_samples < NUM_TRAIN_SAMPLES:
 else:
     print(f"Found {num_available} samples with length > {MIN_TOKEN_LENGTH}. Selecting {actual_num_train_samples}.")
 
-# Select the final subset indices
 selected_indices = range(actual_num_train_samples)
 final_raw_train_subset = filtered_dataset.select(selected_indices)
 
-# Keep the original validation set (or apply similar filtering if desired)
 eval_dataset_raw = dataset["validation"]
 print("Raw datasets selected/filtered.")
-# --- End Data Filtering and Selection ---
 
-
-# Final Preprocessing function (with padding/truncation)
 def tokenize_and_format(examples):
     tokenized = tokenizer(
-        examples['page'], # Use 'text' column
+        examples['page'],
         padding="max_length",
         truncation=True,
         max_length=MAX_LENGTH,
@@ -132,14 +114,12 @@ def tokenize_and_format(examples):
     tokenized["labels"] = tokenized["input_ids"].copy()
     return tokenized
 
-# Tokenize the selected/filtered training subset and the eval set
 print("Tokenizing final datasets with padding/truncation...")
-# Only need to process the final selected subset for training
 with accelerator.main_process_first():
     train_dataset = final_raw_train_subset.map(
         tokenize_and_format,
         batched=True,
-        remove_columns=final_raw_train_subset.column_names # Remove original + 'length' column
+        remove_columns=final_raw_train_subset.column_names
     )
     eval_dataset = eval_dataset_raw.map(
         tokenize_and_format,
@@ -148,17 +128,14 @@ with accelerator.main_process_first():
     )
 print("Tokenization complete.")
 
-# Set format after mapping
 train_dataset.set_format(type='torch')
 eval_dataset.set_format(type='torch')
 print("Dataset format set to torch.")
 
-
-# DataLoaders
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
-    shuffle=True # Shuffle the final training data again per epoch
+    shuffle=True 
 )
 eval_dataloader = DataLoader(
     eval_dataset,
@@ -166,10 +143,8 @@ eval_dataloader = DataLoader(
 )
 print("DataLoaders created.")
 
-# Optimizer and Scheduler
 optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
 
-# Calculate total training steps correctly based on the *actual* number of training samples
 num_update_steps_per_epoch = math.ceil(len(train_dataloader) / GRADIENT_ACCUMULATION_STEPS)
 num_training_steps = NUM_EPOCHS * num_update_steps_per_epoch
 
@@ -181,14 +156,12 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 print(f"Actual number of training samples used: {actual_num_train_samples}")
 print(f"Total optimization steps: {num_training_steps}")
 
-# Prepare everything with accelerator
 print("Preparing model, optimizer, dataloaders with Accelerator...")
 model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
 )
 print("Preparation complete.")
 
-# --- Training Loop (remains the same as before) ---
 total_batch_size = PER_DEVICE_TRAIN_BATCH_SIZE * accelerator.num_processes * GRADIENT_ACCUMULATION_STEPS
 print("***** Running training *****")
 print(f"  Num examples = {actual_num_train_samples}")

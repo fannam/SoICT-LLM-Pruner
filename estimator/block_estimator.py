@@ -28,19 +28,16 @@ class Llama3SimilarityBlockEstimator:
         self._mlp_outputs = {}
         self._hooks = []
         for idx, layer in enumerate(self.model.model.layers):
-            # Capture input to attention LayerNorm of layer idx
             self._hooks.append(
                 layer.input_layernorm.register_forward_hook(
                     lambda m, inp, out, key=idx: self._attn_inputs.update({key: inp[0].detach().clone()})
                 )
             )
-            # Capture MLP input (post-attention norm)
             self._hooks.append(
                 layer.post_attention_layernorm.register_forward_hook(
                     lambda m, inp, out, key=idx: self._mlp_inputs.update({key: inp[0].detach().clone()})
                 )
             )
-            # Capture MLP output
             self._hooks.append(
                 layer.mlp.register_forward_hook(
                     lambda m, inp, out, key=idx: self._mlp_outputs.update({key: (out[0] if isinstance(out, tuple) else out).detach().clone()})
@@ -62,7 +59,6 @@ class Llama3SimilarityBlockEstimator:
             batch = {k: v.to(self.device) for k, v in batch.items() if torch.is_tensor(v)}
             self._attn_inputs.clear(); self._mlp_inputs.clear(); self._mlp_outputs.clear()
             _ = self.model(**batch)
-            # after capture, compute for each start
             for start in range(max_start):
                 end = start + self.block_size - 1
                 x = self._attn_inputs.get(start)
@@ -70,18 +66,15 @@ class Llama3SimilarityBlockEstimator:
                 out = self._mlp_outputs.get(end)
                 if x is None or inp is None or out is None:
                     continue
-                # compute h_{end+1}
                 h_next = inp + out
                 flat_x = x.view(-1, x.size(-1)).float()
                 flat_h = h_next.view(-1, h_next.size(-1)).float()
                 cos = F.cosine_similarity(flat_x, flat_h, dim=1).nan_to_num(1.0).mean().item()
                 importance = 1.0 - cos
-                # ensure results list length
                 if len(results) < max_start:
                     results = [[] for _ in range(max_start)]
                 results[start].append(importance)
         self._remove_hooks()
-        # average across batches
         return [sum(lst)/len(lst) if lst else 0.0 for lst in results]
     
 class Qwen2SimilarityBlockEstimator:
@@ -106,19 +99,16 @@ class Qwen2SimilarityBlockEstimator:
         self._mlp_outputs = {}
         self._hooks = []
         for idx, layer in enumerate(self.model.model.layers):
-            # Capture input to attention LayerNorm of layer idx
             self._hooks.append(
                 layer.input_layernorm.register_forward_hook(
                     lambda m, inp, out, key=idx: self._attn_inputs.update({key: inp[0].detach().clone()})
                 )
             )
-            # Capture MLP input (post-attention norm)
             self._hooks.append(
                 layer.post_attention_layernorm.register_forward_hook(
                     lambda m, inp, out, key=idx: self._mlp_inputs.update({key: inp[0].detach().clone()})
                 )
             )
-            # Capture MLP output
             self._hooks.append(
                 layer.mlp.register_forward_hook(
                     lambda m, inp, out, key=idx: self._mlp_outputs.update({key: (out[0] if isinstance(out, tuple) else out).detach().clone()})
@@ -140,7 +130,6 @@ class Qwen2SimilarityBlockEstimator:
             batch = {k: v.to(self.device) for k, v in batch.items() if torch.is_tensor(v)}
             self._attn_inputs.clear(); self._mlp_inputs.clear(); self._mlp_outputs.clear()
             _ = self.model(**batch)
-            # after capture, compute for each start
             for start in range(max_start):
                 end = start + self.block_size - 1
                 x = self._attn_inputs.get(start)
@@ -148,16 +137,13 @@ class Qwen2SimilarityBlockEstimator:
                 out = self._mlp_outputs.get(end)
                 if x is None or inp is None or out is None:
                     continue
-                # compute h_{end+1}
                 h_next = inp + out
                 flat_x = x.view(-1, x.size(-1)).float()
                 flat_h = h_next.view(-1, h_next.size(-1)).float()
                 cos = F.cosine_similarity(flat_x, flat_h, dim=1).nan_to_num(1.0).mean().item()
                 importance = 1.0 - cos
-                # ensure results list length
                 if len(results) < max_start:
                     results = [[] for _ in range(max_start)]
                 results[start].append(importance)
         self._remove_hooks()
-        # average across batches
         return [sum(lst)/len(lst) if lst else 0.0 for lst in results]

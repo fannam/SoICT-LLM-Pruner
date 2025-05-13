@@ -230,8 +230,7 @@ class Llama3ElementPruner:
                 group_q_mask[self.head_dim * query_idx : self.head_dim * (query_idx + 1)] = True
             for kv_idx in keep_key_value_heads_indices[layer_idx]:
                 group_kv_mask[self.head_dim * kv_idx : self.head_dim * (kv_idx + 1)] = True
-            # new_q_weight = old_q_weight[group_q_mask, :]
-            # print(old_q_weight[0:64]-new_q_weight[0:64])
+
             pruned[layer_idx] = {
                 'qW': old_q_weight[group_q_mask, :],
                 'qb': old_q_bias[group_q_mask] if old_q_bias is not None else None,
@@ -395,7 +394,7 @@ class Llama3ElementPruner:
         def _transfer_mlp(keep_indices):
             print("Transferring MLP weight...")
             for i, (orig_layer, pruned_layer) in enumerate(zip(self.model.model.layers, pruned_model.model.layers)):
-                # gate_proj and up_proj: prune columns of input dim
+
                 orig_gate_w = orig_layer.mlp.gate_proj.weight.data
                 pruned_layer.mlp.gate_proj.weight.data = orig_gate_w[:, keep_indices].clone()
                 if orig_layer.mlp.gate_proj.bias is not None:
@@ -406,7 +405,6 @@ class Llama3ElementPruner:
                 if orig_layer.mlp.up_proj.bias is not None:
                     pruned_layer.mlp.up_proj.bias.data = orig_layer.mlp.up_proj.bias.data.clone()
 
-                # down_proj: prune rows of output dim
                 orig_down_w = orig_layer.mlp.down_proj.weight.data
                 pruned_layer.mlp.down_proj.weight.data = orig_down_w[keep_indices, :].clone()
                 if orig_layer.mlp.down_proj.bias is not None:

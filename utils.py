@@ -4,12 +4,9 @@ import torch.nn as nn
 
 def calculate_importance(x: torch.Tensor, y: torch.Tensor) -> float:
     """Compute importance = 1 - mean_cosine_similarity between flattened x and y."""
-    # Flatten batch and sequence dims
     flat_x = x.view(-1, x.size(-1)).float()
     flat_y = y.view(-1, y.size(-1)).float()
-    # Compute cosine similarity per token
     cos_sim = F.cosine_similarity(flat_x, flat_y, dim=-1)
-    # Replace NaNs (zero vectors) with similarity=1.0 (zero importance)
     cos_sim = torch.nan_to_num(cos_sim, nan=1.0)
     return 1.0 - cos_sim.mean().item()
 
@@ -38,8 +35,6 @@ class AttentionPasser(torch.nn.Module):
         super().__init__()
 
     def forward(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None, output_attentions=False, use_cache=False, **kwargs):
-        # Return the hidden_states unmodified as the first output.
-        # Return None for the attention weights (second expected output).
         return hidden_states, None
     
 class DistilModel(nn.Module):
@@ -47,12 +42,10 @@ class DistilModel(nn.Module):
         super().__init__()
         self.student = student
         self.teacher_kept_layers = teacher_kept_layers
-        # Create a projector per surviving teacher layer: Identity if dims match, else Linear
+
         if student_dim == teacher_dim:
-            # No dimensional mismatch: feature dims align, skip projection
             self.projectors = nn.ModuleList([nn.Identity() for _ in teacher_kept_layers])
         else:
-            # Need to map student_dim -> teacher_dim
             self.projectors = nn.ModuleList([
                 nn.Linear(student_dim, teacher_dim) for _ in teacher_kept_layers
             ])

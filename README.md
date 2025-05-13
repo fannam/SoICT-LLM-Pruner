@@ -18,8 +18,8 @@ pip install -e .
 
 - **Element-level Pruning**: Prune individual attention heads, attention groups, MLP neurons and embedding channels
 - **Layer-level Pruning**: Remove entire attention or MLP (Feed forward) layers
-- **Block-level Pruning**: Remove contiguous Decoder blocks
-- Support for Llama and Qwen2 models
+- **Block-level Pruning**: Remove Decoder blocks
+- Support for Llama3 and Qwen2 models
 - Multiple importance estimation methods
 
 ## Quick Start
@@ -110,6 +110,24 @@ element_pruner = Llma3ElementPruner(model, 'cuda')
 
 pruned_model = element_pruner.prune_attention_group(head_importance=head_importance, target_group=7)
 
+```
+
+### Recovery pruned model performance via Knowledge Distillation
+
+```python
+from distiller.hybrid_distiller import HybridDistiller
+
+# Use Language Modeling Loss, Logits Loss and Feature-based Loss (Black-box and White-box distillation)
+distiller = HybridDistiller(teacher_model, student_model, tokenizer, optimizer, scheduler)
+history = distiller.distill(train_loader, val_loader, "cuda", "cuda")
+```
+
+```python
+from distiller.logits_distiller import LogitsDistiller
+
+# Use only Language Modeling Loss and Logits Loss (full Black-box distillation)\
+distiller = HybridDistiller(teacher_model, student_model, tokenizer, optimizer, scheduler)
+history = distiller.distill(train_loader, val_loader, "cuda", "cuda")
 ```
 
 ## Supported Models

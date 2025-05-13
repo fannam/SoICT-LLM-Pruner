@@ -30,11 +30,9 @@ class LogitsDistiller:
                 device_teacher, device_student,
                 epochs=1, grad_accumulation_steps=8,
                 alpha=0.1, temperature=2.0):
-        # Prepare models
         self.teacher_model.eval()
         self.student_model.train()
 
-        # Initialize wandb if needed
         if self.use_wandb:
             import wandb
             wandb.login(key=self.wandb_key)
@@ -52,7 +50,6 @@ class LogitsDistiller:
                 attention_mask = batch['attention_mask'].to(device_student)
                 labels = batch['labels'][:, 1:].reshape(-1).to(device_student)
 
-                # Teacher logits
                 with torch.no_grad():
                     t_out = self.teacher_model(
                         input_ids=batch['input_ids'].to(device_teacher),
@@ -61,18 +58,15 @@ class LogitsDistiller:
                     )
                     t_logits = t_out.logits[:, :-1, :].reshape(-1, t_out.logits.size(-1)).to(device_student)
 
-                # Student logits
                 s_out = self.student_model(input_ids=input_ids,
                                            attention_mask=attention_mask)
                 s_logits = s_out.logits[:, :-1, :].reshape(-1, s_out.logits.size(-1))
 
-                # Compute loss
                 loss = self.logits_loss(s_logits, t_logits, labels,
                                         temperature=temperature, alpha=alpha)
                 loss = loss / grad_accumulation_steps
                 loss.backward()
 
-                # Optimization step
                 if (step + 1) % grad_accumulation_steps == 0:
                     self.optimizer.step()
                     self.scheduler.step()
@@ -84,8 +78,7 @@ class LogitsDistiller:
                     global_step += 1
                 step += 1
                 epoch_loss += loss.item()
-
-            # Validation
+                
             self.student_model.eval()
             val_loss = 0.0
             val_steps = 0
@@ -116,7 +109,6 @@ class LogitsDistiller:
                 wandb.log({'val_loss': avg_val, 'epoch': epoch, 'step': global_step})
             self.student_model.train()
 
-        # Plot validation loss
         plt.figure()
         plt.plot(range(1, epochs + 1), val_history, marker='o')
         plt.xlabel('Epoch')

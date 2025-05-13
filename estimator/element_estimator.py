@@ -16,11 +16,9 @@ class Llama3ActivationElementEstimator:
         self.model = model.to(device)
         self.device = device
         cfg = copy.deepcopy(model.config)
-        # derive attention parameters
         self.num_heads = cfg.num_attention_heads
         self.hidden_size = cfg.hidden_size
         self.head_dim = self.hidden_size // self.num_heads
-        # derive MLP parameters from first layer
         first_mlp = model.model.layers[0].mlp
         self.intermediate_size = first_mlp.gate_proj.out_features
 
@@ -38,8 +36,7 @@ class Llama3ActivationElementEstimator:
         hooks = []
 
         def aggregate(x: torch.Tensor):
-            # x: (B, S, num_heads)
-            flat = x.reshape(-1, x.size(-1))  # (B*S, num_heads)
+            flat = x.reshape(-1, x.size(-1)) 
             if agg == "sum":
                 return flat.sum(dim=0)
             elif agg == "mean":
@@ -53,33 +50,26 @@ class Llama3ActivationElementEstimator:
 
         def make_hook(layer_idx):
             def hook(module, inputs, output):
-                ctx = inputs[0].detach()  # (B, S, H)
+                ctx = inputs[0].detach()  
                 B, S, H = ctx.shape
-                # reshape to per-head
                 h = ctx.view(B, S, self.num_heads, self.head_dim)
-                # compute per-head L2 norm
-                norms = torch.norm(h, dim=-1)  # (B, S, num_heads)
-                # aggregate over batch & seq
+                norms = torch.norm(h, dim=-1) 
                 imp[layer_idx] += aggregate(norms)
                 count[layer_idx] += B * S
             return hook
 
-        # register hooks for all layers
         for idx, layer in enumerate(self.model.model.layers):
             hook = layer.self_attn.o_proj.register_forward_hook(make_hook(idx))
             hooks.append(hook)
 
-        # forward pass
         with torch.no_grad():
             for batch in tqdm(dataloader, desc="Estimating attention heads importance"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**batch)
 
-        # remove hooks
         for h in hooks:
             h.remove()
 
-        # normalize according to count (for mean/l2/var semantics)
         importance = {}
         for idx, vec in imp.items():
             denom = float(count[idx]) if count[idx] > 0 else 1.0
@@ -99,7 +89,7 @@ class Llama3ActivationElementEstimator:
         hooks = []
 
         def aggregate(x: torch.Tensor):
-            flat = x.reshape(-1, x.size(-1))  # (B*S, Dint)
+            flat = x.reshape(-1, x.size(-1))  
             if agg == "sum":
                 return flat.sum(dim=0)
             elif agg == "mean":
@@ -113,7 +103,7 @@ class Llama3ActivationElementEstimator:
 
         def make_hook(layer_idx):
             def hook(module, inputs, output):
-                h = inputs[0].detach()  # (B, S, Dint)
+                h = inputs[0].detach()  
                 imp[layer_idx] += aggregate(h)
                 B, S, _ = h.shape
                 count[layer_idx] += B * S
@@ -156,7 +146,6 @@ class Llama3ActivationElementEstimator:
         count = defaultdict(int)
         hooks = []
 
-        # initialize buffers
         for idx, layer in enumerate(self.model.model.layers):
             imp[f"input_layernorm_{idx}"] = torch.zeros(self.hidden_size, device=self.device)
             imp[f"post_attention_layernorm_{idx}"] = torch.zeros(self.hidden_size, device=self.device)
@@ -177,30 +166,25 @@ class Llama3ActivationElementEstimator:
 
         def make_hook(key):
             def hook(module, inputs, output):
-                h = output.detach()  # (B, S, H)
+                h = output.detach()  
                 B, S, _ = h.shape
                 imp[key] += aggregate(h)
                 count[key] += B * S
             return hook
 
-        # register hooks on block norms
         for idx, layer in enumerate(self.model.model.layers):
             hooks.append(layer.input_layernorm.register_forward_hook(make_hook(f"input_layernorm_{idx}")))
             hooks.append(layer.post_attention_layernorm.register_forward_hook(make_hook(f"post_attention_layernorm_{idx}")))
-        # final norm
         hooks.append(self.model.model.norm.register_forward_hook(make_hook("final_norm")))
 
-        # run forward
         with torch.no_grad():
             for batch in tqdm(dataloader, desc="Estimating embedding channels importance"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**batch)
 
-        # remove hooks
         for h in hooks:
             h.remove()
 
-        # normalize
         importance = {}
         for key, vec in imp.items():
             denom = float(count[key]) if count[key] > 0 else 1.0
@@ -218,11 +202,9 @@ class Qwen2ActivationElementEstimator:
         self.model = model.to(device)
         self.device = device
         cfg = copy.deepcopy(model.config)
-        # derive attention parameters
         self.num_heads = cfg.num_attention_heads
         self.hidden_size = cfg.hidden_size
         self.head_dim = self.hidden_size // self.num_heads
-        # derive MLP parameters from first layer
         first_mlp = model.model.layers[0].mlp
         self.intermediate_size = first_mlp.gate_proj.out_features
 
@@ -240,8 +222,7 @@ class Qwen2ActivationElementEstimator:
         hooks = []
 
         def aggregate(x: torch.Tensor):
-            # x: (B, S, num_heads)
-            flat = x.reshape(-1, x.size(-1))  # (B*S, num_heads)
+            flat = x.reshape(-1, x.size(-1))  
             if agg == "sum":
                 return flat.sum(dim=0)
             elif agg == "mean":
@@ -255,33 +236,26 @@ class Qwen2ActivationElementEstimator:
 
         def make_hook(layer_idx):
             def hook(module, inputs, output):
-                ctx = inputs[0].detach()  # (B, S, H)
+                ctx = inputs[0].detach()  
                 B, S, H = ctx.shape
-                # reshape to per-head
                 h = ctx.view(B, S, self.num_heads, self.head_dim)
-                # compute per-head L2 norm
-                norms = torch.norm(h, dim=-1)  # (B, S, num_heads)
-                # aggregate over batch & seq
+                norms = torch.norm(h, dim=-1)  
                 imp[layer_idx] += aggregate(norms)
                 count[layer_idx] += B * S
             return hook
 
-        # register hooks for all layers
         for idx, layer in enumerate(self.model.model.layers):
             hook = layer.self_attn.o_proj.register_forward_hook(make_hook(idx))
             hooks.append(hook)
 
-        # forward pass
         with torch.no_grad():
             for batch in tqdm(dataloader, desc="Estimating attention heads importance"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**batch)
 
-        # remove hooks
         for h in hooks:
             h.remove()
 
-        # normalize according to count (for mean/l2/var semantics)
         importance = {}
         for idx, vec in imp.items():
             denom = float(count[idx]) if count[idx] > 0 else 1.0
@@ -301,7 +275,7 @@ class Qwen2ActivationElementEstimator:
         hooks = []
 
         def aggregate(x: torch.Tensor):
-            flat = x.reshape(-1, x.size(-1))  # (B*S, Dint)
+            flat = x.reshape(-1, x.size(-1))  
             if agg == "sum":
                 return flat.sum(dim=0)
             elif agg == "mean":
@@ -315,7 +289,7 @@ class Qwen2ActivationElementEstimator:
 
         def make_hook(layer_idx):
             def hook(module, inputs, output):
-                h = inputs[0].detach()  # (B, S, Dint)
+                h = inputs[0].detach()  
                 imp[layer_idx] += aggregate(h)
                 B, S, _ = h.shape
                 count[layer_idx] += B * S
@@ -358,7 +332,6 @@ class Qwen2ActivationElementEstimator:
         count = defaultdict(int)
         hooks = []
 
-        # initialize buffers
         for idx, layer in enumerate(self.model.model.layers):
             imp[f"input_layernorm_{idx}"] = torch.zeros(self.hidden_size, device=self.device)
             imp[f"post_attention_layernorm_{idx}"] = torch.zeros(self.hidden_size, device=self.device)
@@ -379,30 +352,25 @@ class Qwen2ActivationElementEstimator:
 
         def make_hook(key):
             def hook(module, inputs, output):
-                h = output.detach()  # (B, S, H)
+                h = output.detach()  
                 B, S, _ = h.shape
                 imp[key] += aggregate(h)
                 count[key] += B * S
             return hook
 
-        # register hooks on block norms
         for idx, layer in enumerate(self.model.model.layers):
             hooks.append(layer.input_layernorm.register_forward_hook(make_hook(f"input_layernorm_{idx}")))
             hooks.append(layer.post_attention_layernorm.register_forward_hook(make_hook(f"post_attention_layernorm_{idx}")))
-        # final norm
         hooks.append(self.model.model.norm.register_forward_hook(make_hook("final_norm")))
 
-        # run forward
         with torch.no_grad():
             for batch in tqdm(dataloader, desc="Estimating embedding channels importance"):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 self.model(**batch)
 
-        # remove hooks
         for h in hooks:
             h.remove()
 
-        # normalize
         importance = {}
         for key, vec in imp.items():
             denom = float(count[key]) if count[key] > 0 else 1.0

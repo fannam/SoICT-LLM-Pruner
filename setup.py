@@ -1,7 +1,6 @@
 from setuptools import setup, find_packages
 from pathlib import Path
 
-# long description from README.md if available
 this_directory = Path(__file__).parent
 long_description = ""
 readme_path = this_directory / "README.md"

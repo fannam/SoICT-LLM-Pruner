@@ -16,7 +16,6 @@ class Llama3LayerPruner:
         self.model = model
         self.device = device
         self.dtype = self.model.dtype
-        # Initialize config lists
         setattr(self.model.config, 'attention_layer_to_prune', [])
         setattr(self.model.config, 'mlp_layer_to_prune', [])
 
@@ -36,13 +35,11 @@ class Llama3LayerPruner:
         attn_scores = importance_scores.get('attention', [])
         mlp_scores = importance_scores.get('mlp', [])
         n = len(attn_scores)
-        # Attention
         keep_attn = self._get_keep_indices(attn_scores, n - prune_counts.get('attention', 0))
         to_prune_attn = set(range(n)) - keep_attn
         for i in to_prune_attn:
             pruned_model.model.layers[i].self_attn = AttentionPasser()
         pruned_model.config.attention_layer_to_prune = sorted(to_prune_attn)
-        # MLP
         keep_mlp = self._get_keep_indices(mlp_scores, n - prune_counts.get('mlp', 0))
         to_prune_mlp = set(range(n)) - keep_mlp
         for i in to_prune_mlp:
@@ -60,7 +57,6 @@ class Llama3LayerPruner:
         assert isinstance(model, Qwen2ForCausalLM), "Model must be Qwen2ForCausalLM"
         self.model = model
         self.device = device
-        # Initialize config lists
         setattr(self.model.config, 'attention_layer_to_prune', [])
         setattr(self.model.config, 'mlp_layer_to_prune', [])
 
@@ -80,13 +76,11 @@ class Llama3LayerPruner:
         attn_scores = importance_scores.get('attention', [])
         mlp_scores = importance_scores.get('mlp', [])
         n = len(attn_scores)
-        # Attention
         keep_attn = self._get_keep_indices(attn_scores, n - prune_counts.get('attention', 0))
         to_prune_attn = set(range(n)) - keep_attn
         for i in to_prune_attn:
             pruned_model.model.layers[i].self_attn = AttentionPasser()
         pruned_model.config.attention_layer_to_prune = sorted(to_prune_attn)
-        # MLP
         keep_mlp = self._get_keep_indices(mlp_scores, n - prune_counts.get('mlp', 0))
         to_prune_mlp = set(range(n)) - keep_mlp
         for i in to_prune_mlp:

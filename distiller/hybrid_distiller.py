@@ -48,28 +48,28 @@ class HybridDistiller:
         block_layers_to_prune=None
     ):
         self.teacher_model.eval()
-        # Setup layer mapping
+
         total_layers = self.teacher_model.config.num_hidden_layers
         prune = block_layers_to_prune or getattr(self.student_model.config, 'block_layers_to_prune', None)
         teacher_kept = [i for i in range(total_layers) if not prune or i not in prune]
         if self.student_model.config.num_hidden_layers != len(teacher_kept):
             raise ValueError(f"Student has {self.student_model.config.num_hidden_layers} layers, expected {len(teacher_kept)}.")
-        # Build wrapper
+
         student_dim = self.student_model.config.hidden_size
         teacher_dim = self.teacher_model.config.hidden_size
         wrapper = DistilModel(self.student_model, student_dim, teacher_dim, teacher_kept).to(device_student)
         self.teacher_model.to(device_teacher)
         wrapper.train()
-        # wandb init if requested
+
         if self.use_wandb:
             import wandb
             wandb.login(key=self.wandb_key)
             wandb.init(project=self.project_name, name=self.run_name, reinit=True)
-        # Tracking validation loss
+
         val_loss_history = []
         step = 0
         for epoch in range(epochs):
-            # training
+
             for batch in train_loader:
                 ids = batch['input_ids'].to(device_student)
                 mask = batch['attention_mask'].to(device_student)
@@ -97,7 +97,7 @@ class HybridDistiller:
                                    'distill_loss': kl_ce.item(), 'feature_loss': f_loss.item(),
                                    'epoch': epoch})
                 step += 1
-            # validation
+
             wrapper.eval()
             total_val = 0.0
             count = 0
@@ -123,7 +123,7 @@ class HybridDistiller:
             if self.use_wandb:
                 wandb.log({'val_loss': avg_val, 'epoch': epoch})
             wrapper.train()
-        # Plot validation loss
+
         plt.figure()
         plt.plot(range(1, epochs+1), val_loss_history)
         plt.xlabel('Epoch')
