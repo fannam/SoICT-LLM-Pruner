@@ -49,7 +49,7 @@ class Llama3LayerPruner:
         print(f"Pruned MLP layers: {to_prune_mlp}")
         return pruned_model
 
-class Llama3LayerPruner:
+class Qwen2LayerPruner:
     """
     Prunes lowest-importance attention or MLP layers.
     """

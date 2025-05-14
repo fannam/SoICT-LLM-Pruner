@@ -9,9 +9,9 @@ from torch.optim import AdamW
 import wandb
 import math
 
-WANDB_API_KEY = "" # 
+WANDB_API_KEY = "99b369ca8b063c842225f3522243a32cb9ac1d90" 
 WANDB_PROJECT = "teacher_correction_wikitext"
-MODEL_NAME = "Qwen/Qwen2.5-0.5B"
+MODEL_NAME = "TheGardener/Embedding-and-MLP-ver3-Llama3.2-0.62B"
 DATASET_NAME = "EleutherAI/wikitext_document_level"
 DATASET_CONFIG = 'wikitext-103-raw-v1'
 OUTPUT_DIR = "qwen2.5-0.5b-finetuned-wikitext-pytorch"
@@ -52,7 +52,7 @@ accelerator.init_trackers(
         "gradient_accumulation_steps": GRADIENT_ACCUMULATION_STEPS,
         "seed": SEED,
     },
-    init_kwargs={"wandb": {"name": "Qwen2.5-1.5B_WikiText103_Finetune_LR2e-5_BS2x8_Epoch2"}}
+    init_kwargs={"wandb": {"name": "Llama3.2-0.62B"}}
 )
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
@@ -150,7 +150,7 @@ num_training_steps = NUM_EPOCHS * num_update_steps_per_epoch
 
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer,
-    num_warmup_steps=20,
+    num_warmup_steps=100,
     num_training_steps=num_training_steps,
 )
 print(f"Actual number of training samples used: {actual_num_train_samples}")
