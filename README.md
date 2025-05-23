@@ -144,6 +144,28 @@ distiller = HybridDistiller(teacher_model, student_model, tokenizer, optimizer, 
 history = distiller.distill(train_loader, val_loader, "cuda", "cuda")
 ```
 
+### Hybrid Distillation Approach
+
+Our hybrid distillation approach addresses the challenge of depth mismatch between teacher and student models through a combination of black-box and white-box distillation techniques:
+
+1. **Black-box Distillation**:
+   - Language Modeling Loss: Standard cross-entropy loss for next token prediction
+   - Logits Distillation: KL divergence between teacher and student logits with temperature scaling
+
+2. **White-box Distillation**:
+   - Feature-based Loss: Projection-based feature matching between corresponding layers
+   - Handles depth mismatch by:
+     - Identifying kept layers in the pruned student model
+     - Using learnable projectors to align feature dimensions
+     - Computing MSE loss between projected student features and teacher features
+
+![Feature-based Loss](assets/feature_based_loss.png "Feature-based Distillation Loss")
+
+The hybrid approach combines these losses with configurable weights:
+- α: Controls balance between cross-entropy and KL divergence
+- γ: Controls contribution of feature-based loss
+- Temperature: Adjusts softness of logits for better knowledge transfer
+
 ## Supported Models
 
 - Llama3
