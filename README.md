@@ -1,6 +1,8 @@
 # SOICT-LLM-Pruner
 
-A tri-level framework for structured pruning of Large Language Models (LLMs). Currently supports Llama and Qwen2 models.
+A tri-level framework for structured pruning of Large Language Models (LLMs). Currently supports Llama3 and Qwen2 models.
+
+![Framework Overview](assets/tri-level-framework.png "SOICT-LLM-Pruner Framework")
 
 ## Installation
 
@@ -21,6 +23,15 @@ pip install -e .
 - **Block-level Pruning**: Remove Decoder blocks
 - Support for Llama3 and Qwen2 models
 - Multiple importance estimation methods
+
+### Element-level Pruning
+![Element Pruning Overview](assets/element_pruning_overview.png "Element-level Pruning")
+
+### Layer-level Pruning
+![Layer Pruning](assets/layer_prune.png "Layer-level Pruning")
+
+### Block-level Pruning
+![Block Pruning](assets/block_pruning.png "Block-level Pruning")
 
 ## Quick Start
 
@@ -45,22 +56,25 @@ tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1b")
 ```
 
 ### 3. Estimate Component Importance
+On the old version, we passed the dataloader when we initialize the pruner, which is kind of stupid when we want to experiment with many calibration dataset
 
 #### Element-level Importance (Attention Heads and MLP Neurons)
 
 ```python
 # Initialize estimator
-element_estimator = Llama3ActivationElementEstimator(model, dataloader)
+element_estimator = Llama3ActivationElementEstimator(model)
 
 # Estimate attention head importance
-head_importance = element_estimator.estimate_attention_heads(agg="l2")
+head_importance = element_estimator.estimate_attention_heads(dataloader, agg="l2")
 
 # Estimate MLP neuron importance
-neuron_importance = element_estimator.estimate_mlp_neurons(agg="l2")
+neuron_importance = element_estimator.estimate_mlp_neurons(dataloader, agg="l2")
 
 # Estimate embedding channel importance
-embedding_importance = element_estimator.estimate_embedding_channels(agg="l2")
+embedding_importance = element_estimator.estimate_embedding_channels(dataloader, agg="l2")
 ```
+
+
 
 #### Layer-level Importance
 
@@ -94,7 +108,7 @@ The element-level estimator supports different aggregation methods:
 
 ```python
 # Example with different aggregation
-head_importance = element_estimator.estimate_attention_heads(agg="var")
+head_importance = element_estimator.estimate_attention_heads(dataloader, agg="var")
 ```
 
 ### Pruning Based on Importance Scores

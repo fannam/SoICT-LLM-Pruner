@@ -15,24 +15,23 @@ import wandb
 # --------------------
 WANDB_API_KEY = "99b369ca8b063c842225f3522243a32cb9ac1d90"
 WANDB_PROJECT = "teacher_correction_wikitext"
-MODEL_NAME = "TheGardener/Qwen2.5-0.33B-base"
+MODEL_NAME = "TheGardener/Llama-0.93B-mlp"
 DATASET_NAME = "EleutherAI/wikitext_document_level"
 DATASET_CONFIG = 'wikitext-103-raw-v1'
-OUTPUT_DIR = "qwen2.5-0.33b-finetuned-wikitext-pytorch"
-BEST_MODEL_DIR = os.path.join(OUTPUT_DIR, "best_model")
+OUTPUT_DIR = "llama3.2-0.93b-finetuned-wikitext-pytorch"
 
 NUM_TRAIN_SAMPLES = 30000
-MIN_TOKEN_LENGTH = 150
+MIN_TOKEN_LENGTH = 200
 MAX_LENGTH = 256
 PER_DEVICE_TRAIN_BATCH_SIZE = 4
 PER_DEVICE_EVAL_BATCH_SIZE = 4
-LEARNING_RATE = 5e-5
-NUM_EPOCHS = 5
+LEARNING_RATE = 2e-4
+NUM_EPOCHS = 2
 GRADIENT_ACCUMULATION_STEPS = 8
-SEED = 13
+SEED = 21
 LOG_EVERY_N_STEPS = 10
-WARMUP_STEPS = 100
-ETA_MIN = 5e-7
+WARMUP_STEPS = 20
+ETA_MIN = 2e-7
 
 # --------------------
 # Initialize Weights & Biases
@@ -40,7 +39,7 @@ ETA_MIN = 5e-7
 try:
     wandb.login(key=WANDB_API_KEY)
 except Exception as e:
-    print(f"Could not login to WandB: {e}")
+    print(f"Could not login to WandB: {e}.")
 
 # --------------------
 # Accelerator setup
@@ -63,7 +62,7 @@ accelerator.init_trackers(
         "gradient_accumulation_steps": GRADIENT_ACCUMULATION_STEPS,
         "seed": SEED,
     },
-    init_kwargs={"wandb": {"name": os.path.basename(MODEL_NAME)}}
+    init_kwargs={"wandb": {"name": "Llama3.2-0.93B"}}
 )
 
 # --------------------
@@ -71,7 +70,6 @@ accelerator.init_trackers(
 # --------------------
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, torch_dtype=torch.bfloat16)
-
 if tokenizer.pad_token is None:
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
     tokenizer.pad_token = tokenizer.eos_token
@@ -85,6 +83,7 @@ print("Loading dataset...")
 dataset = load_dataset(DATASET_NAME, DATASET_CONFIG)
 print("Dataset loaded.")
 
+# Shuffle and filter by token length
 shuffled = dataset['train'].shuffle(seed=SEED)
 
 def get_token_length(examples):
@@ -98,13 +97,15 @@ with accelerator.main_process_first():
         num_proc=os.cpu_count()
     )
 filtered = ds_len.filter(lambda ex: ex['length'] > MIN_TOKEN_LENGTH, num_proc=os.cpu_count())
-actual_samples = min(NUM_TRAIN_SAMPLES, len(filtered))
+num_available = len(filtered)
+actual_samples = min(NUM_TRAIN_SAMPLES, num_available)
 if actual_samples < NUM_TRAIN_SAMPLES:
     print(f"Only {actual_samples} samples > {MIN_TOKEN_LENGTH} tokens available.")
 
 train_raw = filtered.select(range(actual_samples))
 eval_raw = dataset['validation']
 
+# Tokenize
 
 def tokenize_and_format(examples):
     tok = tokenizer(
@@ -133,17 +134,14 @@ optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
 num_update_steps = math.ceil(len(train_loader) / GRADIENT_ACCUMULATION_STEPS)
 total_steps = NUM_EPOCHS * num_update_steps
 
-# Warmup scheduler
-warmup_scheduler = LambdaLR(
-    optimizer,
-    lr_lambda=lambda step: float(step) / float(max(1, WARMUP_STEPS)) if step < WARMUP_STEPS else 1.0
-)
-# Cosine annealing scheduler
-cosine_scheduler = CosineAnnealingLR(
-    optimizer,
-    T_max=total_steps - WARMUP_STEPS,
-    eta_min=ETA_MIN
-)
+# Warmup via LambdaLR
+def lr_lambda(current_step: int):
+    if current_step < WARMUP_STEPS:
+        return float(current_step) / float(max(1, WARMUP_STEPS))
+    return 1.0
+
+warmup_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+cosine_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps - WARMUP_STEPS, eta_min=ETA_MIN)
 
 # --------------------
 # Prepare with Accelerator
@@ -155,15 +153,13 @@ model, optimizer, train_loader, eval_loader = accelerator.prepare(
 # --------------------
 # Training Loop
 # --------------------
-best_eval_loss = float('inf')
 progress_bar = tqdm(range(total_steps), disable=not accelerator.is_local_main_process, desc="Training")
 completed_steps = 0
 
 for epoch in range(NUM_EPOCHS):
     model.train()
     total_loss = 0.0
-
-    for batch in train_loader:
+    for step, batch in enumerate(train_loader):
         with accelerator.accumulate(model):
             outputs = model(**batch)
             loss = outputs.loss
@@ -173,11 +169,13 @@ for epoch in range(NUM_EPOCHS):
             if accelerator.sync_gradients:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
+
                 # Scheduler step
                 if completed_steps < WARMUP_STEPS:
                     warmup_scheduler.step()
                 else:
                     cosine_scheduler.step()
+
                 optimizer.zero_grad()
                 progress_bar.update(1)
                 completed_steps += 1
@@ -194,18 +192,17 @@ for epoch in range(NUM_EPOCHS):
         if completed_steps >= total_steps:
             break
 
-    # Epoch training metrics
+    # Epoch metrics
     avg_epoch_loss = total_loss.item() / len(train_loader)
     accelerator.log({"train_loss_epoch": avg_epoch_loss, "epoch": epoch+1})
     if accelerator.is_main_process:
-        print(f"Epoch {epoch+1} train loss: {avg_epoch_loss:.4f}")
+        print(f"Epoch {epoch+1} loss: {avg_epoch_loss:.4f}")
 
-    # --- Evaluation Phase ---
+    # Evaluation
     model.eval()
     eval_losses = []
     for batch in tqdm(eval_loader, desc="Evaluating", disable=not accelerator.is_local_main_process):
-        with torch.no_grad():
-            outputs = model(**batch)
+        with torch.no_grad(): outputs = model(**batch)
         eval_losses.append(accelerator.gather(outputs.loss.repeat(batch['input_ids'].size(0))))
     eval_losses = torch.cat(eval_losses)[: len(eval_ds)]
     eval_loss = torch.mean(eval_losses).item()
@@ -214,20 +211,16 @@ for epoch in range(NUM_EPOCHS):
     accelerator.log({"eval_loss": eval_loss, "perplexity": perplexity, "epoch": epoch+1})
     if accelerator.is_main_process:
         print(f"Epoch {epoch+1} eval loss: {eval_loss:.4f}, ppl: {perplexity:.2f}")
-        if eval_loss < best_eval_loss:
-            print(f"New best model at epoch {epoch+1} with loss {eval_loss:.4f}, saving...")
-            best_eval_loss = eval_loss
-            unwrapped = accelerator.unwrap_model(model)
-            unwrapped.save_pretrained(BEST_MODEL_DIR)
-            tokenizer.save_pretrained(BEST_MODEL_DIR)
 
-# Save final model
+# --------------------
+# Save Model
+# --------------------
 accelerator.wait_for_everyone()
 if accelerator.is_main_process:
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
     unwrapped = accelerator.unwrap_model(model)
     unwrapped.save_pretrained(OUTPUT_DIR)
     tokenizer.save_pretrained(OUTPUT_DIR)
-    print(f"Final model and best model saved to {OUTPUT_DIR} and {BEST_MODEL_DIR}")
+    print(f"Saved to {OUTPUT_DIR}")
 accelerator.end_training()
-print("Training finished.")
+
+print("Training Finished.")
