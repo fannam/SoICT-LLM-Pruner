@@ -52,7 +52,7 @@ model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1b")
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1b")
 
 # Prepare your calibration dataset
-# The dataset should be a list of texts or a DataLoader
+# The dataset should a DataLoader
 ```
 
 ### 3. Estimate Component Importance
