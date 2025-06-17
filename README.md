@@ -48,6 +48,8 @@ from estimator.block_estimator import Llama3SimilarityBlockEstimator
 
 ```python
 # Load model and tokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1b")
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1b")
 
@@ -62,6 +64,8 @@ On the old version, we passed the dataloader when we initialize the pruner, whic
 
 ```python
 # Initialize estimator
+from estimator.element_estimator import Llama3ActivationElementEstimator
+
 element_estimator = Llama3ActivationElementEstimator(model)
 
 # Estimate attention head importance
@@ -79,6 +83,8 @@ embedding_importance = element_estimator.estimate_embedding_channels(dataloader,
 #### Layer-level Importance
 
 ```python
+from estimator.layer_estimator import Llama3SimilarityLayerEstimator
+
 # Initialize estimator
 layer_estimator = Llama3SimilarityLayerEstimator(model)
 
@@ -90,6 +96,8 @@ layer_importance = layer_estimator.estimate(dataloader)
 #### Block-level Importance
 
 ```python
+from estimator.block_estimator import Llama3SimilarityBlockEstimator
+
 # Initialize estimator with desired contiguous block size
 block_estimator = Llama3SimilarityBlockEstimator(model, block_size=1)
 
