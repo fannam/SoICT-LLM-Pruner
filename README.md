@@ -10,7 +10,7 @@ A tri-level framework for structured pruning of Large Language Models (LLMs). Cu
 git clone https://github.com/fannam/SoICT-LLM-Pruner.git
 ```
 
-Move to SoICT-LLM-Pruner folder
+Then move to SoICT-LLM-Pruner folder
 
 ```bash
 pip install -e .
@@ -52,7 +52,7 @@ model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1b")
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1b")
 
 # Prepare your calibration dataset
-# The dataset should a DataLoader
+# The dataset should be a DataLoader
 ```
 
 ### 3. Estimate Component Importance
@@ -126,6 +126,8 @@ pruned_model = element_pruner.prune_attention_group(head_importance=head_importa
 
 ```
 
+For more examples, please visit [Demo.ipynb](Notebook/Demo.ipynb)
+
 ### Recovery pruned model performance via Knowledge Distillation
 
 ```python
@@ -140,7 +142,7 @@ history = distiller.distill(train_loader, val_loader, "cuda", "cuda")
 from distiller.logits_distiller import LogitsDistiller
 
 # Use only Language Modeling Loss and Logits Loss (full Black-box distillation)\
-distiller = HybridDistiller(teacher_model, student_model, tokenizer, optimizer, scheduler)
+distiller = LogitsDistiller(teacher_model, student_model, tokenizer, optimizer, scheduler)
 history = distiller.distill(train_loader, val_loader, "cuda", "cuda")
 ```
 
@@ -182,4 +184,3 @@ The hybrid approach combines these losses with configurable weights:
 - accelerate >= 0.4.10
 
 ## Citation
-
