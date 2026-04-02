@@ -1,9 +1,10 @@
+import copy
+from typing import Dict
+
+import numpy as np
 import torch
 import torch.nn as nn
-import copy
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, LlamaForCausalLM, Qwen2ForCausalLM
-import numpy as np
-from typing import Dict, List
+from transformers import LlamaForCausalLM, Qwen2ForCausalLM
 
 class Llama3ElementPruner:
     def __init__(self, original_model, device='cuda'):
@@ -32,12 +33,12 @@ class Llama3ElementPruner:
             print("Warning: No head to remove.")
             return None
         if target_num_attention_heads>self.original_num_attention_heads:
-            print("Warning: New number of attetion heads must not be larger than the original one, retruning original model.")
+            print("Warning: New number of attention heads must not be larger than the original one. Returning original model.")
             return None
         if target_num_attention_heads<self.original_num_key_value_heads:
             print(f"Warning: number of attention heads must be at least {self.original_num_key_value_heads}.")
             return None
-        if isinstance(self.model, LlamaForCausalLM):
+        if not isinstance(self.model, LlamaForCausalLM):
             print(f"Warning: Not supported model type! Please use LlamaForCausalLM")
             return None
         pruned_weights = {}
@@ -327,7 +328,7 @@ class Llama3ElementPruner:
             new_down = nn.Linear(
                 in_features=target_num_neurons,
                 out_features=old_down_proj.out_features,
-                bias=(b is not None)
+                bias=(bd is not None)
             ).to(self.device).to(self.dtype)
             new_down.weight.data.copy_(Wd)
             if bd is not None:
@@ -351,7 +352,7 @@ class Llama3ElementPruner:
         pruned_config = copy.deepcopy(self.model.config)
         pruned_config.hidden_size = target_embedding_size
         pruned_config.head_dim = self.model.config.hidden_size // self.model.config.num_attention_heads
-        pruned_model = self.model.__class__(pruned_config).to(self.dtype)
+        pruned_model = self.model.__class__(pruned_config).to(self.device).to(self.dtype)
 
         def _get_keep_indices():
             topk = torch.topk(embedding_importance, k=target_embedding_size)
@@ -449,7 +450,7 @@ class Qwen2ElementPruner:
             print("Warning: No head to remove.")
             return None
         if target_num_attention_heads>self.original_num_attention_heads:
-            print("Warning: New number of attetion heads must not be larger than the original one, retruning original model.")
+            print("Warning: New number of attention heads must not be larger than the original one. Returning original model.")
             return None
         if target_num_attention_heads<self.original_num_key_value_heads:
             print(f"Warning: number of attention heads must be at least {self.original_num_key_value_heads}.")
@@ -745,7 +746,7 @@ class Qwen2ElementPruner:
             new_down = nn.Linear(
                 in_features=target_num_neurons,
                 out_features=old_down_proj.out_features,
-                bias=(b is not None)
+                bias=(bd is not None)
             ).to(self.device).to(self.dtype)
             new_down.weight.data.copy_(Wd)
             if bd is not None:
@@ -756,7 +757,7 @@ class Qwen2ElementPruner:
 
     def prune_embeddings(self, embedding_importance, target_embedding_size):
         if  not isinstance(self.model, Qwen2ForCausalLM):
-            print(f"Warning: Not supported model type! Please use LlamaForCausalLM or Qwen2ForCausalLM")
+            print(f"Warning: Not supported model type! Please use Qwen2ForCausalLM")
             return None
         if target_embedding_size >= self.original_hidden_size:
             print(f"Warning: target embedding size: {target_embedding_size} is larger or equal original embedding size: {self.original_hidden_size}. No prune is needed. Returning original model")
@@ -769,7 +770,7 @@ class Qwen2ElementPruner:
         pruned_config = copy.deepcopy(self.model.config)
         pruned_config.hidden_size = target_embedding_size
         pruned_config.head_dim = self.model.config.hidden_size // self.model.config.num_attention_heads
-        pruned_model = self.model.__class__(pruned_config).to(self.dtype)
+        pruned_model = self.model.__class__(pruned_config).to(self.device).to(self.dtype)
 
         def _get_keep_indices():
             topk = torch.topk(embedding_importance, k=target_embedding_size)

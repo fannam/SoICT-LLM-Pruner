@@ -124,17 +124,17 @@ head_importance = element_estimator.estimate_attention_heads(dataloader, agg="va
 After obtaining importance scores, you can use them to prune the model:
 
 ```python
-from pruner.elemet_level_pruner.ElementPruner import Llama3ElementPruner
+from pruner.element_level_pruner.ElementPruner import Llama3ElementPruner
 from pruner.layer_level_pruner.LayerPruner import Llama3LayerPruner
 from pruner.block_level_pruner.BlockPruner import Llama3BlockPruner
 
-element_pruner = Llma3ElementPruner(model, 'cuda')
+element_pruner = Llama3ElementPruner(model, 'cuda')
 
 pruned_model = element_pruner.prune_attention_group(head_importance=head_importance, target_group=7)
 
 ```
 
-For more examples, please visit [Demo.ipynb](Notebook/Demo.ipynb)
+For more examples, please visit `Notebook/Demo_library.ipynb` or `Notebook/Demo_gradio.ipynb`.
 
 ### Recovery pruned model performance via Knowledge Distillation
 

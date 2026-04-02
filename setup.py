@@ -14,6 +14,7 @@ setup(
     author="Phan Hoang Nam",
     author_email="phanhoangnam234@gmail.com/nam.ph215434@sis.hust.edu.vn",
     packages=find_packages(),
+    py_modules=["utils"],
     install_requires=[
         "torch>=2.0.0",
         "transformers>=4.30.0",
@@ -22,6 +23,8 @@ setup(
         "numpy>=1.24.0",
         "accelerate>=0.4.10",
     ],
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     python_requires=">=3.8",
     classifiers=[
         "Development Status :: 3 - Alpha",
