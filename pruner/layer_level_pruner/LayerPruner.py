@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from transformers import LlamaForCausalLM, Qwen2ForCausalLM
+from soict_llm_pruner_core import PRUNER_REGISTRY
 
 from .._shared import _BaseLayerPruner
 
 
-class Llama3LayerPruner(_BaseLayerPruner):
-    model_cls = LlamaForCausalLM
-    model_name = "LlamaForCausalLM"
+@PRUNER_REGISTRY.register("layer")
+class LayerPruner(_BaseLayerPruner):
+    """Adapter-backed layer pruner."""
 
 
-class Qwen2LayerPruner(_BaseLayerPruner):
-    model_cls = Qwen2ForCausalLM
-    model_name = "Qwen2ForCausalLM"
+class Llama3LayerPruner(LayerPruner):
+    """Backward-compatible alias for legacy code."""
+
+
+class Qwen2LayerPruner(LayerPruner):
+    """Backward-compatible alias for legacy code."""
 
 
 __all__ = [
+    "LayerPruner",
     "Llama3LayerPruner",
     "Qwen2LayerPruner",
 ]

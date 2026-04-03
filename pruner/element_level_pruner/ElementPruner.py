@@ -1,843 +1,603 @@
-import copy
-from typing import Dict
+from __future__ import annotations
 
-import numpy as np
+import copy
+import warnings
+from typing import Mapping
+
 import torch
 import torch.nn as nn
-from transformers import LlamaForCausalLM, Qwen2ForCausalLM
 
-class Llama3ElementPruner:
-    def __init__(self, original_model, device='cuda'):
+from soict_llm_pruner_core import PRUNER_REGISTRY, PRUNING_STRATEGY_REGISTRY
+from utils import calculate_embedding_channels_global_score
+
+from .._shared import _BasePruner
+
+
+class BaseElementPruningStrategy:
+    """Extension point for element-level pruning strategies."""
+
+    def prune(self, pruner: "ElementPruner", **kwargs):
+        raise NotImplementedError
+
+
+@PRUNER_REGISTRY.register("element")
+class ElementPruner(_BasePruner):
+    """
+    Generic element-level pruner backed by model adapters and pruning strategies.
+    """
+
+    def __init__(self, original_model, device: str = "cuda", model_adapter=None):
+        super().__init__(model=original_model, device=device, model_adapter=model_adapter)
         self.model = original_model
-        self.device = device
         self.original_config = original_model.config
-        self.head_dim = self.original_config.hidden_size//self.original_config.num_attention_heads
-        self.original_num_key_value_heads = self.original_config.num_key_value_heads
+        self.original_num_key_value_heads = getattr(
+            self.original_config,
+            "num_key_value_heads",
+            self.original_config.num_attention_heads,
+        )
         self.original_num_attention_heads = self.original_config.num_attention_heads
         self.original_num_layers = self.original_config.num_hidden_layers
-        self.original_intermediate_size = self.original_config.intermediate_size
         self.original_hidden_size = self.original_config.hidden_size
-        self.dtype = self.model.dtype
+        self.dtype = getattr(self.model, "dtype", None)
+
+        layers = self.adapter.get_layers(self.model)
+        if len(layers) == 0:
+            raise ValueError("Model does not contain any decoder layers.")
+
+        first_layer = layers[0]
+        self.original_intermediate_size = self.adapter.get_mlp_projections(first_layer).gate_proj.out_features
+        self.head_dim = getattr(self.original_config, "head_dim", None)
+        if self.head_dim is None:
+            q_proj = self.adapter.get_attention_projections(first_layer).q_proj
+            if q_proj.out_features % self.original_num_attention_heads != 0:
+                raise ValueError(
+                    "q_proj.out_features ({}) must be divisible by num_attention_heads ({}).".format(
+                        q_proj.out_features,
+                        self.original_num_attention_heads,
+                    )
+                )
+            self.head_dim = q_proj.out_features // self.original_num_attention_heads
+
+    @staticmethod
+    def _warn_and_abort(message: str):
+        warnings.warn(message, stacklevel=2)
+        return None
+
+    def _clone_config(self):
+        return copy.deepcopy(self.model.config)
+
+    def _instantiate_model(self, config):
+        return self.adapter.instantiate_model(config, device=self.device, dtype=self.dtype)
+
+    def _load_matching_state(self, target_model):
+        source_state = self.model.state_dict()
+        target_state = target_model.state_dict()
+        for key, target_value in target_state.items():
+            source_value = source_state.get(key)
+            if source_value is not None and tuple(source_value.shape) == tuple(target_value.shape):
+                target_value.copy_(source_value)
+        target_model.load_state_dict(target_state, strict=True)
+        return target_model
+
+    def _annotate_pruned_model(self, pruned_model, strategy_name: str, **metadata):
+        history = list(getattr(pruned_model.config, "pruning_history", []))
+        history.append({"strategy": strategy_name, **metadata})
+        setattr(pruned_model.config, "pruning_history", history)
+        setattr(pruned_model.config, "last_pruning_strategy", strategy_name)
+        return pruned_model
+
+    def _normalize_strategy_name(self, strategy_name: str) -> str:
+        if strategy_name in PRUNING_STRATEGY_REGISTRY:
+            return strategy_name
+        prefixed_name = "element.{}".format(strategy_name)
+        if prefixed_name in PRUNING_STRATEGY_REGISTRY:
+            return prefixed_name
+        available = ", ".join(self.available_strategies()) or "<empty>"
+        raise KeyError(
+            "Unknown element pruning strategy '{}'. Available: {}.".format(
+                strategy_name,
+                available,
+            )
+        )
+
+    def available_strategies(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name in PRUNING_STRATEGY_REGISTRY.names()
+            if name.startswith("element.")
+        )
+
+    def apply(self, strategy_name: str, **kwargs):
+        normalized_name = self._normalize_strategy_name(strategy_name)
+        strategy_cls = PRUNING_STRATEGY_REGISTRY.get(normalized_name)
+        strategy = strategy_cls()
+        return strategy.prune(self, **kwargs)
 
     def prune_attention_query(self, head_importance, target_num_attention_heads):
-        """
-        Args:
-        - head_importance: Dictionary map int to tensor of shape config.num_attention_heads
-        - target_num_attention_heads: New number of query heads in GQA
-        """
-        self.model.to(self.device)
-        if target_num_attention_heads%self.original_num_key_value_heads!=0:
-            print(f"Warning: Number of query heads is invalid.")
-            return None
-        if target_num_attention_heads == self.original_num_attention_heads:
-            print("Warning: No head to remove.")
-            return None
-        if target_num_attention_heads>self.original_num_attention_heads:
-            print("Warning: New number of attention heads must not be larger than the original one. Returning original model.")
-            return None
-        if target_num_attention_heads<self.original_num_key_value_heads:
-            print(f"Warning: number of attention heads must be at least {self.original_num_key_value_heads}.")
-            return None
-        if not isinstance(self.model, LlamaForCausalLM):
-            print(f"Warning: Not supported model type! Please use LlamaForCausalLM")
-            return None
-        pruned_weights = {}
-        print("Calculating pruned weights...")
-        for i in range(self.original_num_layers):
-            layer_name = i
-            if layer_name not in head_importance:
-                print(f"Warning: Importance scores for layer {layer_name} not found. Cannot prune layer {i}.")
-                continue
-            try:
-                attention_module = self.model.model.layers[i].self_attn
-                orig_q_proj = attention_module.q_proj
-                orig_o_proj = attention_module.o_proj
-            except (AttributeError, IndexError):
-                print(f"Warning: Could not access attention module/projections for layer {i}. Skipping.")
-                continue
-
-            importance_scores = head_importance[layer_name].to(self.device)
-            indices_to_keep = torch.sort(torch.argsort(importance_scores, descending=True)[:target_num_attention_heads]).values
-
-            head_mask = torch.zeros(self.original_num_attention_heads * self.head_dim, dtype=torch.bool, device=self.device)
-            for head_idx in indices_to_keep:
-                head_mask[head_idx * self.head_dim : (head_idx + 1) * self.head_dim] = True
-
-            new_q_weight = orig_q_proj.weight.data[head_mask, :]
-            new_q_bias = None
-            if orig_q_proj.bias is not None:
-                new_q_bias = orig_q_proj.bias.data[head_mask]
-
-            new_o_weight = orig_o_proj.weight.data[:, head_mask]
-            new_o_bias = None
-            if orig_o_proj.bias is not None:
-                new_o_bias = orig_o_proj.bias.data 
-
-            pruned_weights[i] = {
-                'q_weight': new_q_weight,
-                'o_weight': new_o_weight,
-                'q_bias': new_q_bias,
-                'o_bias': new_o_bias,
-            }
-        print("Creating new model configuration")
-        new_config = copy.deepcopy(self.original_config)
-        new_config.num_attention_heads = target_num_attention_heads
-        new_model = None
-        if isinstance(self.model, LlamaForCausalLM):
-            new_model = LlamaForCausalLM(new_config)
-            new_model.to(self.device)
-            new_model.to(self.dtype)
-        else:
-            print("Unsupported model type.")
-            return None
-        print("New model instantiated.")
-        print("Loading weights into the new model...")
-        original_state_dict = self.model.state_dict()
-        new_state_dict = new_model.state_dict()
-        loaded_keys = set()
-
-        for key in new_state_dict.keys():
-            is_pruned_q = ".self_attn.q_proj." in key
-            is_pruned_o = ".self_attn.o_proj." in key
-            layer_idx_str = key.split('.')[2] if key.startswith("model.layers.") else None
-
-            layer_idx = -1
-            if layer_idx_str is not None and layer_idx_str.isdigit():
-                layer_idx = int(layer_idx_str)
-
-            if layer_idx in pruned_weights and (is_pruned_q or is_pruned_o):
-                proj_type = 'q' if is_pruned_q else 'o'
-                bias_type = 'weight' if 'weight' in key else 'bias'
-                pruned_tensor = pruned_weights[layer_idx][f'{proj_type}_{bias_type}']
-
-                if pruned_tensor is not None:
-                    if new_state_dict[key].shape == pruned_tensor.shape:
-                        new_state_dict[key].copy_(pruned_tensor)
-                    else:
-                        print(f"ERROR: Shape mismatch for {key}. Expected {new_state_dict[key].shape}, got {pruned_tensor.shape}")
-                elif bias_type == 'bias' and new_state_dict[key] is not None:
-                    print(f"Warning: Original model had no bias for {key.replace('.bias', '')}, but new model expects one? Check config.")
-                elif bias_type == 'bias' and new_state_dict[key] is None:
-                    pass
-                else:
-                    print(f"ERROR: Pruned tensor for {key} is None unexpectedly.")
-
-            elif key in original_state_dict:
-                if new_state_dict[key].shape == original_state_dict[key].shape:
-                    new_state_dict[key].copy_(original_state_dict[key])
-                else:
-                    print(f"ERROR: Shape mismatch for {key}. Expected {new_state_dict[key].shape}, got {original_state_dict[key].shape} alaalala")
-            else:
-                print(f"ERROR: Key {key} not found in original state_dict.")
-
-            loaded_keys.add(key)
-
-        if len(loaded_keys) != len(new_state_dict):
-            print(f"Warning: Processed {len(loaded_keys)} keys, but new state dict has {len(new_state_dict)} keys.")
-            missing_keys = set(new_state_dict.keys()) - loaded_keys
-            print(f"Missing keys potentially: {missing_keys}")
-
-        try:
-            new_model.load_state_dict(new_state_dict, strict=True)
-            print("Successfully loaded state dict into the new model.")
-        except RuntimeError as e:
-            print(f"ERROR loading state dict: {e}")
-            print("Check for shape mismatches or missing/unexpected keys.")
-            raise
-
-        print("--- Pruning and Rebuilding Process Complete ---")
-        return new_model
+        return self.apply(
+            "element.attention_query",
+            head_importance=head_importance,
+            target_num_attention_heads=target_num_attention_heads,
+        )
 
     def prune_attention_group(self, head_importance, target_group):
-        if not isinstance(self.model, LlamaForCausalLM):
-            print(f"Warning: Not supported model type! Please use LlamaForCausalLM")
-            return None
-        self.model.to(self.device)
-        query_head_per_group = self.original_num_attention_heads // self.original_num_key_value_heads
-        original_group_count = self.original_num_key_value_heads
-        if target_group >= original_group_count:
-            print("Warning: target_group is larger or equal original group. No pruning is needed.")
-            return None
-        elif target_group <= 0:
-            print("Warning: target_group must be a positive integer.")
-            return None
-        new_config = copy.deepcopy(self.original_config)
-        new_config.num_attention_heads = target_group * query_head_per_group
-        new_config.num_key_value_heads = target_group
-        new_model = None
-        print("Creating pruned model...")
-        if isinstance(self.model, LlamaForCausalLM):
-            new_model = LlamaForCausalLM(new_config)
-            new_model.to(self.device)
-            new_model.to(self.dtype)
-        else:
-            print("Unsupported model type.")
-            return None
-        def _compute_group_importance_per_layer(
-            head_importance: Dict[int, torch.Tensor],
-            orig_groups: int
-        ) -> Dict[int, torch.Tensor]:
-            """
-            Given:
-              - head_importance: mapping layer_idx → Tensor of shape (num_q_heads,)
-              - orig_groups:      number of KV-head groups per layer
-            Returns:
-              - layer_idx → Tensor of shape (orig_groups,), where each entry is the
-                mean importance of that group’s query heads in that layer.
-            """
-            per_layer_group_imp: Dict[int, torch.Tensor] = {}
-            for layer_idx, imp in head_importance.items():
-                grouped = imp.view(orig_groups, query_head_per_group)
-                per_layer_group_imp[layer_idx] = grouped.mean(dim=1)
-            return per_layer_group_imp
-        def _get_keep_indices_group(head_imp):
-            per_layer_group_importance = _compute_group_importance_per_layer(head_importance=head_imp, orig_groups=original_group_count)
-            keep_indices_group = {}
-            for layer_idx in range(self.original_num_layers):
-                topk = torch.topk(per_layer_group_importance[layer_idx], k=target_group)
-                topk_indices_np = topk.indices.numpy()
-                topk_indices_np.sort()
-                keep_indices_group[layer_idx] = topk_indices_np
-            return keep_indices_group
-        print("Getting key value heads indices to keep...")
-        keep_key_value_heads_indices = _get_keep_indices_group(head_importance)
-        #print(keep_key_value_heads_indices)
-        keep_query_heads_indices = {}
-        for layer_idx in keep_key_value_heads_indices:
-            tmp_keep_query_indices = []
-            for group_idx in keep_key_value_heads_indices[layer_idx]:
-                start = group_idx * query_head_per_group
-                end = start + query_head_per_group
-                tmp_keep_query_indices.extend(range(start, end))
-            keep_query_heads_indices[layer_idx] = np.array(tmp_keep_query_indices)
-        #print(keep_query_heads_indices)
-        pruned = {}
-        print("Calculating new weight...")
-        for layer_idx in range(self.original_num_layers):
-            try:
-                attention_module = self.model.model.layers[layer_idx].self_attn
-            except (AttributeError, IndexError):
-                print(f"Warning: Could not access attention module/projections for layer {layer_idx}. Skipping.")
-                continue
-            old_q_weight, old_q_bias = attention_module.q_proj.weight.data, attention_module.q_proj.bias.data if attention_module.q_proj.bias is not None else None
-            old_k_weight, old_k_bias = attention_module.k_proj.weight.data, attention_module.k_proj.bias.data if attention_module.k_proj.bias is not None else None
-            old_v_weight, old_v_bias = attention_module.v_proj.weight.data, attention_module.v_proj.bias.data if attention_module.v_proj.bias is not None else None
-            old_o_weight, old_o_bias = attention_module.o_proj.weight.data, attention_module.o_proj.bias.data if attention_module.o_proj.bias is not None else None
-
-            group_q_mask = torch.zeros(self.original_num_attention_heads * self.head_dim, dtype=torch.bool, device=self.device)
-            group_kv_mask = torch.zeros(original_group_count * self.head_dim, dtype=torch.bool, device=self.device)
-
-            for query_idx in keep_query_heads_indices[layer_idx]:
-                group_q_mask[self.head_dim * query_idx : self.head_dim * (query_idx + 1)] = True
-            for kv_idx in keep_key_value_heads_indices[layer_idx]:
-                group_kv_mask[self.head_dim * kv_idx : self.head_dim * (kv_idx + 1)] = True
-
-            pruned[layer_idx] = {
-                'qW': old_q_weight[group_q_mask, :],
-                'qb': old_q_bias[group_q_mask] if old_q_bias is not None else None,
-                'kW': old_k_weight[group_kv_mask, :],
-                'kb': old_k_bias[group_kv_mask] if old_k_bias is not None else None,
-                'vW': old_v_weight[group_kv_mask, :],
-                'vb': old_v_bias[group_kv_mask] if old_v_bias is not None else None,
-                'oW': old_o_weight[:, group_q_mask],
-                'ob': old_o_bias,
-            }
-        new_state_dict = new_model.state_dict()
-        original_state_dict = self.model.state_dict()
-        print("Transferring weight...")
-        for key in new_state_dict.keys():
-            parts = key.split('.')
-            if parts[:2] == ['model','layers']:
-                print("Found supported model!")
-                layer_idx = int(parts[2])
-                attn = self.model.model.layers[layer_idx].self_attn
-                if 'self_attn.q_proj.weight' in key:
-                    new_state_dict[key].copy_(pruned[layer_idx]['qW'])
-                    continue
-                if 'self_attn.q_proj.bias' in key and pruned[layer_idx]['qb'] is not None:
-                    new_state_dict[key].copy_(pruned[layer_idx]['qb'])
-                    continue
-                if 'self_attn.k_proj.weight' in key:
-                    new_state_dict[key].copy_(pruned[layer_idx]['kW'])
-                    continue
-                if 'self_attn.k_proj.bias' in key and pruned[layer_idx]['kb'] is not None:
-                    new_state_dict[key].copy_(pruned[layer_idx]['kb'])
-                    continue
-                if 'self_attn.v_proj.weight' in key:
-                    new_state_dict[key].copy_(pruned[layer_idx]['vW'])
-                    continue
-                if 'self_attn.v_proj.bias' in key and pruned[layer_idx]['vb'] is not None:
-                    new_state_dict[key].copy_(pruned[layer_idx]['vb'])
-                    continue
-                if 'self_attn.o_proj.weight' in key:
-                    new_state_dict[key].copy_(pruned[layer_idx]['oW'])
-                    continue
-                if 'self_attn.o_proj.bias' in key and pruned[layer_idx]['ob'] is not None:
-                    new_state_dict[key].copy_(pruned[layer_idx]['ob'])
-                    continue
-            if key in original_state_dict and new_state_dict[key].shape == original_state_dict[key].shape:
-                new_state_dict[key].copy_(original_state_dict[key])
-
-        new_model.load_state_dict(new_state_dict, strict=True)
-        print("Pruned successfully!")
-        print(new_model)
-        return new_model
+        return self.apply(
+            "element.attention_group",
+            head_importance=head_importance,
+            target_group=target_group,
+        )
 
     def prune_mlp(self, neuron_importance, target_num_neurons):
-        if target_num_neurons >= self.original_intermediate_size:
-            print(f"Warning: target intermediate size: f{target_num_neurons} is larger or equal original intermediate size: {self.original_intermediate_size}. No prune is needed.")
-            return None
-        if target_num_neurons <= 0:
-            print(f"Warning: target intermediate size must be a positive integer")
-            return None
-        if not isinstance(self.model, LlamaForCausalLM):
-            print(f"Warning: Not supported model type! Please use LlamaForCausalLM")
-            return None
-        pruned_model = copy.deepcopy(self.model).to(self.device)
-        pruned_model.config.intermediate_size = target_num_neurons
-        keep = {}
-        print("Checking size...")
-        for idx, scores in neuron_importance.items():
-            if target_num_neurons > scores.numel():
-                raise ValueError(f"new_intermediate_size={target_num_neurons} > layer {idx}")
-            topk = torch.topk(scores, target_num_neurons, largest=True).indices.tolist()
-            keep[idx] = sorted(topk)
-        print("Pruning...")
-        for idx, layer in enumerate(pruned_model.model.layers):
-            hid_idx = keep.get(idx, list(range(self.original_intermediate_size)))
-            if len(hid_idx) == self.original_intermediate_size:
-                continue
-            mlp = layer.mlp
-            for name in ('gate_proj', 'up_proj'):
-                proj = getattr(mlp, name)
-                W = proj.weight.data[hid_idx].to(self.dtype)
-                b = proj.bias.data[hid_idx].to(self.dtype) if proj.bias is not None else None
-                new_linear = nn.Linear(
-                    in_features=proj.in_features,
-                    out_features=target_num_neurons,
-                    bias=(b is not None)
-                ).to(self.device).to(self.dtype)
-                new_linear.weight.data.copy_(W)
-                if b is not None:
-                    new_linear.bias.data.copy_(b)
-                setattr(mlp, name, new_linear)
-            
-            old_down_proj = mlp.down_proj
-            Wd = old_down_proj.weight.data[:, hid_idx].to(self.dtype)
-            bd = old_down_proj.bias.data.clone().to(self.dtype) if old_down_proj.bias is not None else None
-            new_down = nn.Linear(
-                in_features=target_num_neurons,
-                out_features=old_down_proj.out_features,
-                bias=(bd is not None)
-            ).to(self.device).to(self.dtype)
-            new_down.weight.data.copy_(Wd)
-            if bd is not None:
-                new_down.bias.data.copy_(bd)
-            mlp.down_proj = new_down
-        print("Pruned successfully")
-        return pruned_model
+        return self.apply(
+            "element.mlp",
+            neuron_importance=neuron_importance,
+            target_num_neurons=target_num_neurons,
+        )
 
     def prune_embeddings(self, embedding_importance, target_embedding_size):
-        if not isinstance(self.model, LlamaForCausalLM):
-            print(f"Warning: Not supported model type! Please use LlamaForCausalLM")
-            return None
-        if target_embedding_size >= self.original_hidden_size:
-            print(f"Warning: target embedding size: {target_embedding_size} is larger or equal original embedding size: {self.original_hidden_size}. No prune is needed. Returning original model")
-            return None
-        if target_embedding_size <= 0:
-            print(f"Warning: target embedding size must be a positive integer")
-            return None
-        topk = torch.topk(embedding_importance, k=target_embedding_size)
-        topk_indices_np = topk.indices.numpy()
-        pruned_config = copy.deepcopy(self.model.config)
-        pruned_config.hidden_size = target_embedding_size
-        pruned_config.head_dim = self.model.config.hidden_size // self.model.config.num_attention_heads
-        pruned_model = self.model.__class__(pruned_config).to(self.device).to(self.dtype)
+        return self.apply(
+            "element.embedding_channels",
+            embedding_importance=embedding_importance,
+            target_embedding_size=target_embedding_size,
+        )
 
-        def _get_keep_indices():
-            topk = torch.topk(embedding_importance, k=target_embedding_size)
-            topk_indices_np = topk.indices.numpy()
-            topk_indices_np.sort()
-            return topk_indices_np
+    def _validate_layer_score_map(
+        self,
+        score_map: Mapping[int, torch.Tensor],
+        score_name: str,
+        expected_numel: int | None = None,
+        min_numel: int | None = None,
+    ) -> None:
+        missing_layers = [layer_idx for layer_idx in range(self.original_num_layers) if layer_idx not in score_map]
+        if missing_layers:
+            raise ValueError(
+                "{} is missing scores for layers {}.".format(
+                    score_name,
+                    missing_layers,
+                )
+            )
 
-        def _transfer_embeddings(keep_indices):
-            print("Transferring embedding weight...")
-            orig_w = self.model.model.embed_tokens.weight.data
-            pruned_model.model.embed_tokens.weight.data = orig_w[:, keep_indices].clone()
-
-        def _transfer_input_layernorm(keep_indices):
-            print("Transferring input layernorm weight...")
-            for i, layer in enumerate(self.model.model.layers):
-                orig_w = layer.input_layernorm.weight.data
-                pruned_model.model.layers[i].input_layernorm.weight.data = orig_w[keep_indices].clone()
-
-        def _transfer_self_attn(keep_indices):
-            print("Transferring self attention weight...")
-            for i, (orig_layer, pruned_layer) in enumerate(zip(self.model.model.layers, pruned_model.model.layers)):
-                pruned_layer.self_attn.q_proj.weight.data = orig_layer.self_attn.q_proj.weight.data[:, keep_indices].clone()
-                pruned_layer.self_attn.k_proj.weight.data = orig_layer.self_attn.k_proj.weight.data[:, keep_indices].clone()
-                pruned_layer.self_attn.v_proj.weight.data = orig_layer.self_attn.v_proj.weight.data[:, keep_indices].clone()
-                pruned_layer.self_attn.o_proj.weight.data = orig_layer.self_attn.o_proj.weight.data[keep_indices, :].clone()
-                if orig_layer.self_attn.o_proj.bias is not None:
-                    pruned_layer.self_attn.o_proj.bias.data = orig_layer.self_attn.o_proj.bias.data[keep_indices].clone()
-
-        def _transfer_outside_layernorm(keep_indices):
-            print("Transferring outside layernorm weight...")
-            orig_w = self.model.model.norm.weight.data
-            pruned_model.model.norm.weight.data = orig_w[keep_indices].clone()
-
-        def _transfer_post_attention_norm(keep_indices):
-            print("Transferring post attention layernorm weight...")
-            for i, layer in enumerate(self.model.model.layers):
-                orig_w = layer.post_attention_layernorm.weight.data
-                pruned_model.model.layers[i].post_attention_layernorm.weight.data = orig_w[keep_indices].clone()
-
-        def _transfer_mlp(keep_indices):
-            print("Transferring MLP weight...")
-            for i, (orig_layer, pruned_layer) in enumerate(zip(self.model.model.layers, pruned_model.model.layers)):
-
-                orig_gate_w = orig_layer.mlp.gate_proj.weight.data
-                pruned_layer.mlp.gate_proj.weight.data = orig_gate_w[:, keep_indices].clone()
-                if orig_layer.mlp.gate_proj.bias is not None:
-                    pruned_layer.mlp.gate_proj.bias.data = orig_layer.mlp.gate_proj.bias.data.clone()
-
-                orig_up_w = orig_layer.mlp.up_proj.weight.data
-                pruned_layer.mlp.up_proj.weight.data = orig_up_w[:, keep_indices].clone()
-                if orig_layer.mlp.up_proj.bias is not None:
-                    pruned_layer.mlp.up_proj.bias.data = orig_layer.mlp.up_proj.bias.data.clone()
-
-                orig_down_w = orig_layer.mlp.down_proj.weight.data
-                pruned_layer.mlp.down_proj.weight.data = orig_down_w[keep_indices, :].clone()
-                if orig_layer.mlp.down_proj.bias is not None:
-                    pruned_layer.mlp.down_proj.bias.data = orig_layer.mlp.down_proj.bias.data[keep_indices].clone()
-
-        keep_indices = _get_keep_indices()
-        _transfer_embeddings(keep_indices)
-        _transfer_input_layernorm(keep_indices)
-        _transfer_outside_layernorm(keep_indices)
-        _transfer_post_attention_norm(keep_indices)
-        _transfer_self_attn(keep_indices)
-        _transfer_mlp(keep_indices)
-        pruned_model.config.hidden_size = target_embedding_size
-        print("Pruned successfully!")
-        print(pruned_model)
-        return pruned_model
-    
-class Qwen2ElementPruner:
-    def __init__(self, original_model, device='cuda'):
-        self.model = original_model
-        self.device = device
-        self.original_config = original_model.config
-        self.head_dim = self.original_config.hidden_size//self.original_config.num_attention_heads
-        self.original_num_key_value_heads = self.original_config.num_key_value_heads
-        self.original_num_attention_heads = self.original_config.num_attention_heads
-        self.original_num_layers = self.original_config.num_hidden_layers
-        self.original_intermediate_size = self.original_config.intermediate_size
-        self.original_hidden_size = self.original_config.hidden_size
-        self.dtype = self.model.dtype
-
-    def prune_attention_query(self, head_importance, target_num_attention_heads):
-        """
-        Args:
-        - head_importance: Dictionary map int to tensor of shape config.num_attention_heads
-        - target_num_attention_heads: New number of query heads in GQA
-        """
-        self.model.to(self.device)
-        if target_num_attention_heads%self.original_num_key_value_heads!=0:
-            print(f"Warning: Number of query heads is invalid.")
-            return None
-        if target_num_attention_heads == self.original_num_attention_heads:
-            print("Warning: No head to remove.")
-            return None
-        if target_num_attention_heads>self.original_num_attention_heads:
-            print("Warning: New number of attention heads must not be larger than the original one. Returning original model.")
-            return None
-        if target_num_attention_heads<self.original_num_key_value_heads:
-            print(f"Warning: number of attention heads must be at least {self.original_num_key_value_heads}.")
-            return None
-        if not isinstance(self.model, Qwen2ForCausalLM):
-            print(f"Warning: Not supported model type! Please use Qwen2ForCausalLM.")
-            return None
-        pruned_weights = {}
-        print("Calculating pruned weights...")
-        for i in range(self.original_num_layers):
-            layer_name = i
-            if layer_name not in head_importance:
-                print(f"Warning: Importance scores for layer {layer_name} not found. Cannot prune layer {i}.")
-                continue
-            try:
-                attention_module = self.model.model.layers[i].self_attn
-                orig_q_proj = attention_module.q_proj
-                orig_o_proj = attention_module.o_proj
-            except (AttributeError, IndexError):
-                print(f"Warning: Could not access attention module/projections for layer {i}. Skipping.")
-                continue
-
-            importance_scores = head_importance[layer_name].to(self.device)
-            indices_to_keep = torch.sort(torch.argsort(importance_scores, descending=True)[:target_num_attention_heads]).values
-
-            head_mask = torch.zeros(self.original_num_attention_heads * self.head_dim, dtype=torch.bool, device=self.device)
-            for head_idx in indices_to_keep:
-                head_mask[head_idx * self.head_dim : (head_idx + 1) * self.head_dim] = True
-
-            new_q_weight = orig_q_proj.weight.data[head_mask, :]
-            new_q_bias = None
-            if orig_q_proj.bias is not None:
-                new_q_bias = orig_q_proj.bias.data[head_mask]
-
-            new_o_weight = orig_o_proj.weight.data[:, head_mask]
-            new_o_bias = None
-            if orig_o_proj.bias is not None:
-                new_o_bias = orig_o_proj.bias.data 
-
-            pruned_weights[i] = {
-                'q_weight': new_q_weight,
-                'o_weight': new_o_weight,
-                'q_bias': new_q_bias,
-                'o_bias': new_o_bias,
-            }
-        print("Creating new model configuration")
-        new_config = copy.deepcopy(self.original_config)
-        new_config.num_attention_heads = target_num_attention_heads
-        new_config.head_dim = self.head_dim
-        new_model = None
-        if isinstance(self.model, Qwen2ForCausalLM):
-            new_model = Qwen2ForCausalLM(new_config)
-            new_model.to(self.device)
-            new_model.to(self.dtype)
-        else:
-            print("Unsupported model type.")
-            return None
-        print("New model instantiated.")
-        print("Loading weights into the new model...")
-        original_state_dict = self.model.state_dict()
-        new_state_dict = new_model.state_dict()
-        loaded_keys = set()
-
-        for key in new_state_dict.keys():
-            is_pruned_q = ".self_attn.q_proj." in key
-            is_pruned_o = ".self_attn.o_proj." in key
-            layer_idx_str = key.split('.')[2] if key.startswith("model.layers.") else None
-
-            layer_idx = -1
-            if layer_idx_str is not None and layer_idx_str.isdigit():
-                layer_idx = int(layer_idx_str)
-
-            if layer_idx in pruned_weights and (is_pruned_q or is_pruned_o):
-                proj_type = 'q' if is_pruned_q else 'o'
-                bias_type = 'weight' if 'weight' in key else 'bias'
-                pruned_tensor = pruned_weights[layer_idx][f'{proj_type}_{bias_type}']
-
-                if pruned_tensor is not None:
-                    if new_state_dict[key].shape == pruned_tensor.shape:
-                        new_state_dict[key].copy_(pruned_tensor)
-                    else:
-                        print(f"ERROR: Shape mismatch for {key}. Expected {new_state_dict[key].shape}, got {pruned_tensor.shape}")
-                elif bias_type == 'bias' and new_state_dict[key] is not None:
-                    print(f"Warning: Original model had no bias for {key.replace('.bias', '')}, but new model expects one? Check config.")
-                elif bias_type == 'bias' and new_state_dict[key] is None:
-                    pass
-                else:
-                    print(f"ERROR: Pruned tensor for {key} is None unexpectedly.")
-
-            elif key in original_state_dict:
-                if new_state_dict[key].shape == original_state_dict[key].shape:
-                    new_state_dict[key].copy_(original_state_dict[key])
-                else:
-                    print(f"ERROR: Shape mismatch for {key}. Expected {new_state_dict[key].shape}, got {original_state_dict[key].shape} alaalala")
-            else:
-                print(f"ERROR: Key {key} not found in original state_dict.")
-
-            loaded_keys.add(key)
-
-        if len(loaded_keys) != len(new_state_dict):
-            print(f"Warning: Processed {len(loaded_keys)} keys, but new state dict has {len(new_state_dict)} keys.")
-            missing_keys = set(new_state_dict.keys()) - loaded_keys
-            print(f"Missing keys potentially: {missing_keys}")
-
-        try:
-            new_model.load_state_dict(new_state_dict, strict=True)
-            print("Successfully loaded state dict into the new model.")
-        except RuntimeError as e:
-            print(f"ERROR loading state dict: {e}")
-            print("Check for shape mismatches or missing/unexpected keys.")
-            raise
-
-        print("--- Pruning and Rebuilding Process Complete ---")
-        return new_model
-
-    def prune_attention_group(self, head_importance, target_group):
-        if not isinstance(self.model, Qwen2ForCausalLM):
-            print(f"Warning: Not supported model type! Please use Qwen2ForCausalLM")
-            return None
-        self.model.to(self.device)
-        query_head_per_group = self.original_num_attention_heads // self.original_num_key_value_heads
-        original_group_count = self.original_num_key_value_heads
-        if target_group >= original_group_count:
-            print("Warning: target_group is larger or equal original group. No pruning is needed.")
-            return None
-        elif target_group <= 0:
-            print("Warning: target_group must be a positive integer.")
-            return None
-        new_config = copy.deepcopy(self.original_config)
-        new_config.num_attention_heads = target_group * query_head_per_group
-        new_config.num_key_value_heads = target_group
-        new_config.head_dim = self.head_dim
-        new_model = None
-        print("Creating pruned model...")
-        if isinstance(self.model, Qwen2ForCausalLM):
-            new_model = Qwen2ForCausalLM(new_config)
-            new_model.to(self.device)
-            new_model.to(self.dtype)
-        else:
-            print("Unsupported model type.")
-            return None
-        def _compute_group_importance_per_layer(
-            head_importance: Dict[int, torch.Tensor],
-            orig_groups: int
-        ) -> Dict[int, torch.Tensor]:
-            """
-            Given:
-              - head_importance: mapping layer_idx → Tensor of shape (num_q_heads,)
-              - orig_groups:      number of KV-head groups per layer
-            Returns:
-              - layer_idx → Tensor of shape (orig_groups,), where each entry is the
-                mean importance of that group’s query heads in that layer.
-            """
-            per_layer_group_imp: Dict[int, torch.Tensor] = {}
-            for layer_idx, imp in head_importance.items():
-                grouped = imp.view(orig_groups, query_head_per_group)
-                per_layer_group_imp[layer_idx] = grouped.mean(dim=1)
-            return per_layer_group_imp
-        def _get_keep_indices_group(head_imp):
-            per_layer_group_importance = _compute_group_importance_per_layer(head_importance=head_imp, orig_groups=original_group_count)
-            keep_indices_group = {}
-            for layer_idx in range(self.original_num_layers):
-                topk = torch.topk(per_layer_group_importance[layer_idx], k=target_group)
-                topk_indices_np = topk.indices.numpy()
-                topk_indices_np.sort()
-                keep_indices_group[layer_idx] = topk_indices_np
-            return keep_indices_group
-        print("Getting key value heads indices to keep...")
-        keep_key_value_heads_indices = _get_keep_indices_group(head_importance)
-        #print(keep_key_value_heads_indices)
-        keep_query_heads_indices = {}
-        for layer_idx in keep_key_value_heads_indices:
-            tmp_keep_query_indices = []
-            for group_idx in keep_key_value_heads_indices[layer_idx]:
-                start = group_idx * query_head_per_group
-                end = start + query_head_per_group
-                tmp_keep_query_indices.extend(range(start, end))
-            keep_query_heads_indices[layer_idx] = np.array(tmp_keep_query_indices)
-        #print(keep_query_heads_indices)
-        pruned = {}
-        print("Calculating new weight...")
         for layer_idx in range(self.original_num_layers):
-            try:
-                attention_module = self.model.model.layers[layer_idx].self_attn
-            except (AttributeError, IndexError):
-                print(f"Warning: Could not access attention module/projections for layer {layer_idx}. Skipping.")
-                continue
-            old_q_weight, old_q_bias = attention_module.q_proj.weight.data, attention_module.q_proj.bias.data if attention_module.q_proj.bias is not None else None
-            old_k_weight, old_k_bias = attention_module.k_proj.weight.data, attention_module.k_proj.bias.data if attention_module.k_proj.bias is not None else None
-            old_v_weight, old_v_bias = attention_module.v_proj.weight.data, attention_module.v_proj.bias.data if attention_module.v_proj.bias is not None else None
-            old_o_weight, old_o_bias = attention_module.o_proj.weight.data, attention_module.o_proj.bias.data if attention_module.o_proj.bias is not None else None
+            scores = score_map[layer_idx]
+            tensor = scores if torch.is_tensor(scores) else torch.as_tensor(scores)
+            if tensor.ndim != 1:
+                raise ValueError(
+                    "{}[{}] must be a 1D tensor.".format(score_name, layer_idx)
+                )
+            if expected_numel is not None and tensor.numel() != expected_numel:
+                raise ValueError(
+                    "{}[{}] must contain {} scores, received {}.".format(
+                        score_name,
+                        layer_idx,
+                        expected_numel,
+                        tensor.numel(),
+                    )
+                )
+            if min_numel is not None and tensor.numel() < min_numel:
+                raise ValueError(
+                    "{}[{}] must contain at least {} scores, received {}.".format(
+                        score_name,
+                        layer_idx,
+                        min_numel,
+                        tensor.numel(),
+                    )
+                )
 
-            group_q_mask = torch.zeros(self.original_num_attention_heads * self.head_dim, dtype=torch.bool, device=self.device)
-            group_kv_mask = torch.zeros(original_group_count * self.head_dim, dtype=torch.bool, device=self.device)
+    @staticmethod
+    def _to_device_tensor(values, device: str) -> torch.Tensor:
+        tensor = values if torch.is_tensor(values) else torch.as_tensor(values)
+        return tensor.to(device)
 
-            for query_idx in keep_query_heads_indices[layer_idx]:
-                group_q_mask[self.head_dim * query_idx : self.head_dim * (query_idx + 1)] = True
-            for kv_idx in keep_key_value_heads_indices[layer_idx]:
-                group_kv_mask[self.head_dim * kv_idx : self.head_dim * (kv_idx + 1)] = True
-            # new_q_weight = old_q_weight[group_q_mask, :]
-            # print(old_q_weight[0:64]-new_q_weight[0:64])
-            pruned[layer_idx] = {
-                'qW': old_q_weight[group_q_mask, :],
-                'qb': old_q_bias[group_q_mask] if old_q_bias is not None else None,
-                'kW': old_k_weight[group_kv_mask, :],
-                'kb': old_k_bias[group_kv_mask] if old_k_bias is not None else None,
-                'vW': old_v_weight[group_kv_mask, :],
-                'vb': old_v_bias[group_kv_mask] if old_v_bias is not None else None,
-                'oW': old_o_weight[:, group_q_mask],
-                'ob': old_o_bias,
-            }
-        new_state_dict = new_model.state_dict()
-        original_state_dict = self.model.state_dict()
-        print("Transferring weight...")
-        for key in new_state_dict.keys():
-            parts = key.split('.')
-            if parts[:2] == ['model','layers']:
-                #print("Found supported model!")
-                layer_idx = int(parts[2])
-                attn = self.model.model.layers[layer_idx].self_attn
-                if 'self_attn.q_proj.weight' in key:
-                    new_state_dict[key].copy_(pruned[layer_idx]['qW'])
-                    continue
-                if 'self_attn.q_proj.bias' in key and pruned[layer_idx]['qb'] is not None:
-                    new_state_dict[key].copy_(pruned[layer_idx]['qb'])
-                    continue
-                if 'self_attn.k_proj.weight' in key:
-                    new_state_dict[key].copy_(pruned[layer_idx]['kW'])
-                    continue
-                if 'self_attn.k_proj.bias' in key and pruned[layer_idx]['kb'] is not None:
-                    new_state_dict[key].copy_(pruned[layer_idx]['kb'])
-                    continue
-                if 'self_attn.v_proj.weight' in key:
-                    new_state_dict[key].copy_(pruned[layer_idx]['vW'])
-                    continue
-                if 'self_attn.v_proj.bias' in key and pruned[layer_idx]['vb'] is not None:
-                    new_state_dict[key].copy_(pruned[layer_idx]['vb'])
-                    continue
-                if 'self_attn.o_proj.weight' in key:
-                    new_state_dict[key].copy_(pruned[layer_idx]['oW'])
-                    continue
-                if 'self_attn.o_proj.bias' in key and pruned[layer_idx]['ob'] is not None:
-                    new_state_dict[key].copy_(pruned[layer_idx]['ob'])
-                    continue
-            if key in original_state_dict and new_state_dict[key].shape == original_state_dict[key].shape:
-                new_state_dict[key].copy_(original_state_dict[key])
+    @staticmethod
+    def _sorted_topk_indices(scores: torch.Tensor, k: int) -> torch.Tensor:
+        return torch.sort(torch.topk(scores, k=k, largest=True).indices).values
 
-        new_model.load_state_dict(new_state_dict, strict=True)
-        print("Pruned successfully!")
-        print(new_model)
-        return new_model
+    def _build_head_mask(
+        self,
+        keep_indices: torch.Tensor,
+        total_heads: int,
+        device: torch.device | str,
+    ) -> torch.Tensor:
+        mask = torch.zeros(total_heads * self.head_dim, dtype=torch.bool, device=device)
+        for head_idx in keep_indices.tolist():
+            start = head_idx * self.head_dim
+            mask[start : start + self.head_dim] = True
+        return mask
 
-    def prune_mlp(self, neuron_importance, target_num_neurons):
-        if target_num_neurons >= self.original_intermediate_size:
-            print(f"Warning: target intermediate size: f{target_num_neurons} is larger or equal original intermediate size: {self.original_intermediate_size}. No prune is needed.")
-            return None
+    @staticmethod
+    def _copy_tensor(target_tensor: torch.Tensor, source_tensor: torch.Tensor) -> None:
+        if tuple(target_tensor.shape) != tuple(source_tensor.shape):
+            raise ValueError(
+                "Shape mismatch. Expected {}, got {}.".format(
+                    tuple(target_tensor.shape),
+                    tuple(source_tensor.shape),
+                )
+            )
+        target_tensor.data.copy_(
+            source_tensor.to(device=target_tensor.device, dtype=target_tensor.dtype)
+        )
+
+    def _copy_linear(
+        self,
+        linear: nn.Linear,
+        weight: torch.Tensor,
+        bias: torch.Tensor | None = None,
+    ) -> None:
+        self._copy_tensor(linear.weight, weight)
+        if linear.bias is None:
+            if bias is not None:
+                raise ValueError("Tried to copy bias into a bias-free linear layer.")
+            return
+        if bias is None:
+            linear.bias.data.zero_()
+            return
+        self._copy_tensor(linear.bias, bias)
+
+    @staticmethod
+    def _linear_with_reference(
+        reference: nn.Linear,
+        in_features: int,
+        out_features: int,
+        bias: bool,
+    ) -> nn.Linear:
+        new_linear = nn.Linear(
+            in_features=in_features,
+            out_features=out_features,
+            bias=bias,
+        ).to(reference.weight.device)
+        return new_linear.to(reference.weight.dtype)
+
+    @staticmethod
+    def _global_embedding_scores(embedding_importance) -> torch.Tensor:
+        if isinstance(embedding_importance, Mapping):
+            return calculate_embedding_channels_global_score(embedding_importance)
+        return embedding_importance if torch.is_tensor(embedding_importance) else torch.as_tensor(embedding_importance)
+
+
+@PRUNING_STRATEGY_REGISTRY.register("element.attention_query")
+class AttentionQueryPruningStrategy(BaseElementPruningStrategy):
+    def prune(
+        self,
+        pruner: ElementPruner,
+        head_importance,
+        target_num_attention_heads: int,
+    ):
+        if target_num_attention_heads % pruner.original_num_key_value_heads != 0:
+            return pruner._warn_and_abort("Number of query heads is invalid.")
+        if target_num_attention_heads == pruner.original_num_attention_heads:
+            return pruner._warn_and_abort("No attention heads need to be removed.")
+        if target_num_attention_heads > pruner.original_num_attention_heads:
+            return pruner._warn_and_abort(
+                "New number of attention heads must not exceed the original one."
+            )
+        if target_num_attention_heads < pruner.original_num_key_value_heads:
+            return pruner._warn_and_abort(
+                "Number of attention heads must be at least {}.".format(
+                    pruner.original_num_key_value_heads
+                )
+            )
+
+        pruner._validate_layer_score_map(
+            score_map=head_importance,
+            score_name="head_importance",
+            expected_numel=pruner.original_num_attention_heads,
+        )
+
+        new_config = pruner._clone_config()
+        pruner.adapter.set_num_attention_heads(new_config, target_num_attention_heads)
+        pruner.adapter.set_head_dim(new_config, pruner.head_dim)
+        new_model = pruner._load_matching_state(pruner._instantiate_model(new_config))
+
+        source_layers = pruner.adapter.get_layers(pruner.model)
+        target_layers = pruner.adapter.get_layers(new_model)
+        for layer_idx, (source_layer, target_layer) in enumerate(zip(source_layers, target_layers)):
+            source_scores = pruner._to_device_tensor(head_importance[layer_idx], pruner.device)
+            keep_indices = pruner._sorted_topk_indices(
+                source_scores,
+                target_num_attention_heads,
+            )
+            attention_src = pruner.adapter.get_attention_projections(source_layer)
+            attention_dst = pruner.adapter.get_attention_projections(target_layer)
+            head_mask = pruner._build_head_mask(
+                keep_indices=keep_indices,
+                total_heads=pruner.original_num_attention_heads,
+                device=attention_src.q_proj.weight.device,
+            )
+
+            pruner._copy_linear(
+                attention_dst.q_proj,
+                attention_src.q_proj.weight.data[head_mask, :],
+                attention_src.q_proj.bias.data[head_mask] if attention_src.q_proj.bias is not None else None,
+            )
+            pruner._copy_linear(
+                attention_dst.o_proj,
+                attention_src.o_proj.weight.data[:, head_mask],
+                attention_src.o_proj.bias.data if attention_src.o_proj.bias is not None else None,
+            )
+
+        return pruner._annotate_pruned_model(
+            new_model,
+            "element.attention_query",
+            target_num_attention_heads=target_num_attention_heads,
+        )
+
+
+@PRUNING_STRATEGY_REGISTRY.register("element.attention_group")
+class AttentionGroupPruningStrategy(BaseElementPruningStrategy):
+    def prune(self, pruner: ElementPruner, head_importance, target_group: int):
+        query_heads_per_group = (
+            pruner.original_num_attention_heads // pruner.original_num_key_value_heads
+        )
+        if query_heads_per_group * pruner.original_num_key_value_heads != pruner.original_num_attention_heads:
+            raise ValueError("num_attention_heads must be divisible by num_key_value_heads.")
+        if target_group >= pruner.original_num_key_value_heads:
+            return pruner._warn_and_abort("target_group does not remove any attention group.")
+        if target_group <= 0:
+            return pruner._warn_and_abort("target_group must be a positive integer.")
+
+        pruner._validate_layer_score_map(
+            score_map=head_importance,
+            score_name="head_importance",
+            expected_numel=pruner.original_num_attention_heads,
+        )
+
+        new_config = pruner._clone_config()
+        pruner.adapter.set_num_attention_heads(new_config, target_group * query_heads_per_group)
+        pruner.adapter.set_num_key_value_heads(new_config, target_group)
+        pruner.adapter.set_head_dim(new_config, pruner.head_dim)
+        new_model = pruner._load_matching_state(pruner._instantiate_model(new_config))
+
+        source_layers = pruner.adapter.get_layers(pruner.model)
+        target_layers = pruner.adapter.get_layers(new_model)
+
+        for layer_idx, (source_layer, target_layer) in enumerate(zip(source_layers, target_layers)):
+            scores = pruner._to_device_tensor(head_importance[layer_idx], pruner.device)
+            group_scores = scores.reshape(pruner.original_num_key_value_heads, query_heads_per_group).mean(dim=1)
+            keep_groups = pruner._sorted_topk_indices(group_scores, target_group)
+
+            keep_query_heads = []
+            for group_idx in keep_groups.tolist():
+                start = group_idx * query_heads_per_group
+                keep_query_heads.extend(range(start, start + query_heads_per_group))
+            keep_query_heads = torch.tensor(keep_query_heads, device=pruner.device, dtype=torch.long)
+
+            attention_src = pruner.adapter.get_attention_projections(source_layer)
+            attention_dst = pruner.adapter.get_attention_projections(target_layer)
+            query_mask = pruner._build_head_mask(
+                keep_indices=keep_query_heads,
+                total_heads=pruner.original_num_attention_heads,
+                device=attention_src.q_proj.weight.device,
+            )
+            kv_mask = pruner._build_head_mask(
+                keep_indices=keep_groups,
+                total_heads=pruner.original_num_key_value_heads,
+                device=attention_src.k_proj.weight.device,
+            )
+
+            pruner._copy_linear(
+                attention_dst.q_proj,
+                attention_src.q_proj.weight.data[query_mask, :],
+                attention_src.q_proj.bias.data[query_mask] if attention_src.q_proj.bias is not None else None,
+            )
+            pruner._copy_linear(
+                attention_dst.k_proj,
+                attention_src.k_proj.weight.data[kv_mask, :],
+                attention_src.k_proj.bias.data[kv_mask] if attention_src.k_proj.bias is not None else None,
+            )
+            pruner._copy_linear(
+                attention_dst.v_proj,
+                attention_src.v_proj.weight.data[kv_mask, :],
+                attention_src.v_proj.bias.data[kv_mask] if attention_src.v_proj.bias is not None else None,
+            )
+            pruner._copy_linear(
+                attention_dst.o_proj,
+                attention_src.o_proj.weight.data[:, query_mask],
+                attention_src.o_proj.bias.data if attention_src.o_proj.bias is not None else None,
+            )
+
+        return pruner._annotate_pruned_model(
+            new_model,
+            "element.attention_group",
+            target_num_key_value_heads=target_group,
+            target_num_attention_heads=target_group * query_heads_per_group,
+        )
+
+
+@PRUNING_STRATEGY_REGISTRY.register("element.mlp")
+class MLPPruningStrategy(BaseElementPruningStrategy):
+    def prune(
+        self,
+        pruner: ElementPruner,
+        neuron_importance,
+        target_num_neurons: int,
+    ):
+        if target_num_neurons >= pruner.original_intermediate_size:
+            return pruner._warn_and_abort(
+                "target_num_neurons is larger than or equal to the original intermediate size."
+            )
         if target_num_neurons <= 0:
-            print(f"Warning: target intermediate size must be a positive integer")
-            return None
-        pruned_model = copy.deepcopy(self.model).to(self.device)
-        pruned_model.config.intermediate_size = target_num_neurons
-        pruned_model.config.head_dim = self.head_dim
-        keep = {}
-        print("Checking size...")
-        for idx, scores in neuron_importance.items():
-            if target_num_neurons > scores.numel():
-                raise ValueError(f"new_intermediate_size={target_num_neurons} > layer {idx}")
-            topk = torch.topk(scores, target_num_neurons, largest=True).indices.tolist()
-            keep[idx] = sorted(topk)
-        print("Pruning...")
-        for idx, layer in enumerate(pruned_model.model.layers):
-            hid_idx = keep.get(idx, list(range(self.original_intermediate_size)))
-            if len(hid_idx) == self.original_intermediate_size:
-                continue
-            mlp = layer.mlp
-            for name in ('gate_proj', 'up_proj'):
-                proj = getattr(mlp, name)
-                W = proj.weight.data[hid_idx].to(self.dtype)
-                b = proj.bias.data[hid_idx].to(self.dtype) if proj.bias is not None else None
-                new_linear = nn.Linear(
-                    in_features=proj.in_features,
+            return pruner._warn_and_abort("target_num_neurons must be a positive integer.")
+
+        pruner._validate_layer_score_map(
+            score_map=neuron_importance,
+            score_name="neuron_importance",
+            min_numel=target_num_neurons,
+        )
+
+        pruned_model = copy.deepcopy(pruner.model).to(pruner.device)
+        pruner.adapter.set_intermediate_size(pruned_model.config, target_num_neurons)
+
+        for layer_idx, layer in enumerate(pruner.adapter.get_layers(pruned_model)):
+            scores = pruner._to_device_tensor(neuron_importance[layer_idx], pruner.device)
+            keep_indices = pruner._sorted_topk_indices(scores, target_num_neurons).tolist()
+            mlp = pruner.adapter.get_mlp_projections(layer)
+
+            for projection_name, projection in (
+                ("gate_proj", mlp.gate_proj),
+                ("up_proj", mlp.up_proj),
+            ):
+                new_projection = pruner._linear_with_reference(
+                    reference=projection,
+                    in_features=projection.in_features,
                     out_features=target_num_neurons,
-                    bias=(b is not None)
-                ).to(self.device).to(self.dtype)
-                new_linear.weight.data.copy_(W)
-                if b is not None:
-                    new_linear.bias.data.copy_(b)
-                setattr(mlp, name, new_linear)
-            
-            old_down_proj = mlp.down_proj
-            Wd = old_down_proj.weight.data[:, hid_idx].to(self.dtype)
-            bd = old_down_proj.bias.data.clone().to(self.dtype) if old_down_proj.bias is not None else None
-            new_down = nn.Linear(
+                    bias=projection.bias is not None,
+                )
+                pruner._copy_linear(
+                    new_projection,
+                    projection.weight.data[keep_indices, :],
+                    projection.bias.data[keep_indices] if projection.bias is not None else None,
+                )
+                pruner.adapter.set_mlp_projection(layer, projection_name, new_projection)
+
+            down_proj = mlp.down_proj
+            new_down_proj = pruner._linear_with_reference(
+                reference=down_proj,
                 in_features=target_num_neurons,
-                out_features=old_down_proj.out_features,
-                bias=(bd is not None)
-            ).to(self.device).to(self.dtype)
-            new_down.weight.data.copy_(Wd)
-            if bd is not None:
-                new_down.bias.data.copy_(bd)
-            mlp.down_proj = new_down
-        print("Pruned successfully")
-        return pruned_model
+                out_features=down_proj.out_features,
+                bias=down_proj.bias is not None,
+            )
+            pruner._copy_linear(
+                new_down_proj,
+                down_proj.weight.data[:, keep_indices],
+                down_proj.bias.data if down_proj.bias is not None else None,
+            )
+            pruner.adapter.set_mlp_projection(layer, "down_proj", new_down_proj)
 
-    def prune_embeddings(self, embedding_importance, target_embedding_size):
-        if  not isinstance(self.model, Qwen2ForCausalLM):
-            print(f"Warning: Not supported model type! Please use Qwen2ForCausalLM")
-            return None
-        if target_embedding_size >= self.original_hidden_size:
-            print(f"Warning: target embedding size: {target_embedding_size} is larger or equal original embedding size: {self.original_hidden_size}. No prune is needed. Returning original model")
-            return None
+        return pruner._annotate_pruned_model(
+            pruned_model,
+            "element.mlp",
+            target_num_neurons=target_num_neurons,
+        )
+
+
+@PRUNING_STRATEGY_REGISTRY.register("element.embedding_channels")
+class EmbeddingChannelPruningStrategy(BaseElementPruningStrategy):
+    def prune(
+        self,
+        pruner: ElementPruner,
+        embedding_importance,
+        target_embedding_size: int,
+    ):
+        if target_embedding_size >= pruner.original_hidden_size:
+            return pruner._warn_and_abort(
+                "target_embedding_size is larger than or equal to the original hidden size."
+            )
         if target_embedding_size <= 0:
-            print(f"Warning: target embedding size must be a positive integer")
-            return None
-        topk = torch.topk(embedding_importance, k=target_embedding_size)
-        topk_indices_np = topk.indices.numpy()
-        pruned_config = copy.deepcopy(self.model.config)
-        pruned_config.hidden_size = target_embedding_size
-        pruned_config.head_dim = self.model.config.hidden_size // self.model.config.num_attention_heads
-        pruned_model = self.model.__class__(pruned_config).to(self.device).to(self.dtype)
+            return pruner._warn_and_abort("target_embedding_size must be a positive integer.")
 
-        def _get_keep_indices():
-            topk = torch.topk(embedding_importance, k=target_embedding_size)
-            topk_indices_np = topk.indices.numpy()
-            topk_indices_np.sort()
-            return topk_indices_np
+        global_scores = pruner._global_embedding_scores(embedding_importance)
+        if global_scores.ndim != 1:
+            raise ValueError("embedding_importance must resolve to a 1D tensor.")
+        if target_embedding_size > global_scores.numel():
+            raise ValueError(
+                "target_embedding_size={} exceeds available channels {}.".format(
+                    target_embedding_size,
+                    global_scores.numel(),
+                )
+            )
 
-        def _transfer_embeddings(keep_indices):
-            print("Transferring embedding weight...")
-            orig_w = self.model.model.embed_tokens.weight.data
-            pruned_model.model.embed_tokens.weight.data = orig_w[:, keep_indices].clone()
+        new_config = pruner._clone_config()
+        pruner.adapter.set_hidden_size(new_config, target_embedding_size)
+        pruner.adapter.set_head_dim(new_config, pruner.head_dim)
+        new_model = pruner._load_matching_state(pruner._instantiate_model(new_config))
 
-        def _transfer_input_layernorm(keep_indices):
-            print("Transferring input layernorm weight...")
-            for i, layer in enumerate(self.model.model.layers):
-                orig_w = layer.input_layernorm.weight.data
-                pruned_model.model.layers[i].input_layernorm.weight.data = orig_w[keep_indices].clone()
+        keep_indices = pruner._sorted_topk_indices(
+            pruner._to_device_tensor(global_scores, pruner.device),
+            target_embedding_size,
+        ).tolist()
 
-        def _transfer_self_attn(keep_indices):
-            print("Transferring self attention weight...")
-            for i, (orig_layer, pruned_layer) in enumerate(zip(self.model.model.layers, pruned_model.model.layers)):
-                pruned_layer.self_attn.q_proj.weight.data = orig_layer.self_attn.q_proj.weight.data[:, keep_indices].clone()
-                pruned_layer.self_attn.k_proj.weight.data = orig_layer.self_attn.k_proj.weight.data[:, keep_indices].clone()
-                pruned_layer.self_attn.v_proj.weight.data = orig_layer.self_attn.v_proj.weight.data[:, keep_indices].clone()
-                pruned_layer.self_attn.o_proj.weight.data = orig_layer.self_attn.o_proj.weight.data[keep_indices, :].clone()
-                if orig_layer.self_attn.o_proj.bias is not None:
-                    pruned_layer.self_attn.o_proj.bias.data = orig_layer.self_attn.o_proj.bias.data[keep_indices].clone()
+        source_embed = pruner.adapter.get_embed_tokens(pruner.model)
+        target_embed = pruner.adapter.get_embed_tokens(new_model)
+        pruner._copy_tensor(target_embed.weight, source_embed.weight.data[:, keep_indices])
 
-        def _transfer_outside_layernorm(keep_indices):
-            print("Transferring outside layernorm weight...")
-            orig_w = self.model.model.norm.weight.data
-            pruned_model.model.norm.weight.data = orig_w[keep_indices].clone()
+        source_lm_head = pruner.adapter.get_lm_head(pruner.model)
+        target_lm_head = pruner.adapter.get_lm_head(new_model)
+        if source_lm_head is not None and target_lm_head is not None and hasattr(source_lm_head, "weight"):
+            pruner._copy_tensor(target_lm_head.weight, source_lm_head.weight.data[:, keep_indices])
+            source_bias = getattr(source_lm_head, "bias", None)
+            target_bias = getattr(target_lm_head, "bias", None)
+            if source_bias is not None and target_bias is not None:
+                pruner._copy_tensor(target_bias, source_bias.data)
 
-        def _transfer_post_attention_norm(keep_indices):
-            print("Transferring post attention layernorm weight...")
-            for i, layer in enumerate(self.model.model.layers):
-                orig_w = layer.post_attention_layernorm.weight.data
-                pruned_model.model.layers[i].post_attention_layernorm.weight.data = orig_w[keep_indices].clone()
+        pruner._copy_tensor(
+            pruner.adapter.get_final_norm(new_model).weight,
+            pruner.adapter.get_final_norm(pruner.model).weight.data[keep_indices],
+        )
 
-        def _transfer_mlp(keep_indices):
-            print("Transferring MLP weight...")
-            for i, (orig_layer, pruned_layer) in enumerate(zip(self.model.model.layers, pruned_model.model.layers)):
-                # gate_proj and up_proj: prune columns of input dim
-                orig_gate_w = orig_layer.mlp.gate_proj.weight.data
-                pruned_layer.mlp.gate_proj.weight.data = orig_gate_w[:, keep_indices].clone()
-                if orig_layer.mlp.gate_proj.bias is not None:
-                    pruned_layer.mlp.gate_proj.bias.data = orig_layer.mlp.gate_proj.bias.data.clone()
+        source_layers = pruner.adapter.get_layers(pruner.model)
+        target_layers = pruner.adapter.get_layers(new_model)
+        for source_layer, target_layer in zip(source_layers, target_layers):
+            pruner._copy_tensor(
+                pruner.adapter.get_input_layernorm(target_layer).weight,
+                pruner.adapter.get_input_layernorm(source_layer).weight.data[keep_indices],
+            )
+            pruner._copy_tensor(
+                pruner.adapter.get_post_attention_layernorm(target_layer).weight,
+                pruner.adapter.get_post_attention_layernorm(source_layer).weight.data[keep_indices],
+            )
 
-                orig_up_w = orig_layer.mlp.up_proj.weight.data
-                pruned_layer.mlp.up_proj.weight.data = orig_up_w[:, keep_indices].clone()
-                if orig_layer.mlp.up_proj.bias is not None:
-                    pruned_layer.mlp.up_proj.bias.data = orig_layer.mlp.up_proj.bias.data.clone()
+            attention_src = pruner.adapter.get_attention_projections(source_layer)
+            attention_dst = pruner.adapter.get_attention_projections(target_layer)
+            for projection_src, projection_dst in (
+                (attention_src.q_proj, attention_dst.q_proj),
+                (attention_src.k_proj, attention_dst.k_proj),
+                (attention_src.v_proj, attention_dst.v_proj),
+            ):
+                pruner._copy_linear(
+                    projection_dst,
+                    projection_src.weight.data[:, keep_indices],
+                    projection_src.bias.data if projection_src.bias is not None else None,
+                )
+            pruner._copy_linear(
+                attention_dst.o_proj,
+                attention_src.o_proj.weight.data[keep_indices, :],
+                attention_src.o_proj.bias.data[keep_indices] if attention_src.o_proj.bias is not None else None,
+            )
 
-                # down_proj: prune rows of output dim
-                orig_down_w = orig_layer.mlp.down_proj.weight.data
-                pruned_layer.mlp.down_proj.weight.data = orig_down_w[keep_indices, :].clone()
-                if orig_layer.mlp.down_proj.bias is not None:
-                    pruned_layer.mlp.down_proj.bias.data = orig_layer.mlp.down_proj.bias.data[keep_indices].clone()
+            mlp_src = pruner.adapter.get_mlp_projections(source_layer)
+            mlp_dst = pruner.adapter.get_mlp_projections(target_layer)
+            for projection_src, projection_dst in (
+                (mlp_src.gate_proj, mlp_dst.gate_proj),
+                (mlp_src.up_proj, mlp_dst.up_proj),
+            ):
+                pruner._copy_linear(
+                    projection_dst,
+                    projection_src.weight.data[:, keep_indices],
+                    projection_src.bias.data if projection_src.bias is not None else None,
+                )
+            pruner._copy_linear(
+                mlp_dst.down_proj,
+                mlp_src.down_proj.weight.data[keep_indices, :],
+                mlp_src.down_proj.bias.data[keep_indices] if mlp_src.down_proj.bias is not None else None,
+            )
 
-        keep_indices = _get_keep_indices()
-        _transfer_embeddings(keep_indices)
-        _transfer_input_layernorm(keep_indices)
-        _transfer_outside_layernorm(keep_indices)
-        _transfer_post_attention_norm(keep_indices)
-        _transfer_self_attn(keep_indices)
-        _transfer_mlp(keep_indices)
-        pruned_model.config.hidden_size = target_embedding_size
-        print("Pruned successfully!")
-        print(pruned_model)
-        return pruned_model
+        return pruner._annotate_pruned_model(
+            new_model,
+            "element.embedding_channels",
+            target_hidden_size=target_embedding_size,
+        )
+
+
+def available_element_pruning_strategies() -> tuple[str, ...]:
+    return tuple(
+        name
+        for name in PRUNING_STRATEGY_REGISTRY.names()
+        if name.startswith("element.")
+    )
+
+
+class Llama3ElementPruner(ElementPruner):
+    """Backward-compatible alias for legacy code."""
+
+
+class Qwen2ElementPruner(ElementPruner):
+    """Backward-compatible alias for legacy code."""
+
+
+__all__ = [
+    "BaseElementPruningStrategy",
+    "ElementPruner",
+    "Llama3ElementPruner",
+    "Qwen2ElementPruner",
+    "available_element_pruning_strategies",
+]

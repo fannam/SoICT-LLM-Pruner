@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from transformers import LlamaForCausalLM, Qwen2ForCausalLM
+from soict_llm_pruner_core import PRUNER_REGISTRY
 
 from .._shared import _BaseBlockPruner
 
 
-class Llama3BlockPruner(_BaseBlockPruner):
-    model_cls = LlamaForCausalLM
-    model_name = "LlamaForCausalLM"
+@PRUNER_REGISTRY.register("block")
+class BlockPruner(_BaseBlockPruner):
+    """Adapter-backed block pruner."""
 
 
-class Qwen2BlockPruner(_BaseBlockPruner):
-    model_cls = Qwen2ForCausalLM
-    model_name = "Qwen2ForCausalLM"
+class Llama3BlockPruner(BlockPruner):
+    """Backward-compatible alias for legacy code."""
+
+
+class Qwen2BlockPruner(BlockPruner):
+    """Backward-compatible alias for legacy code."""
 
 
 __all__ = [
+    "BlockPruner",
     "Llama3BlockPruner",
     "Qwen2BlockPruner",
 ]

@@ -3,16 +3,16 @@ from __future__ import annotations
 import gc
 import math
 from collections import defaultdict
-from typing import Any, Dict, List, MutableMapping, Sequence, Type
+from typing import Any, Dict, List, MutableMapping, Sequence
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from transformers import PreTrainedModel
 
-from utils import IdentityLayer, calculate_importance
+from soict_llm_pruner_core import BaseModelAdapter, resolve_model_adapter
+from utils import calculate_importance
 
 
 def _move_batch_to_device(batch: MutableMapping[str, Any], device: str) -> Dict[str, Any]:
@@ -55,13 +55,39 @@ def _dataloader_total(dataloader: DataLoader, max_batches: int) -> int | None:
         return None
 
 
-class _BaseEstimator:
-    model_cls: Type[nn.Module] = nn.Module
-    model_name = "model"
+def _first_decoder_layer(adapter: BaseModelAdapter, model: nn.Module) -> nn.Module:
+    layers = adapter.get_layers(model)
+    if len(layers) == 0:
+        raise ValueError("Model does not contain any decoder layers.")
+    return layers[0]
 
-    def __init__(self, model: nn.Module, device: str = "cuda"):
-        if not isinstance(model, self.model_cls):
-            raise TypeError("Model must be a {} instance".format(self.model_name))
+
+def _attention_head_dim(adapter: BaseModelAdapter, model: nn.Module) -> int:
+    config_head_dim = getattr(model.config, "head_dim", None)
+    if config_head_dim is not None:
+        return int(config_head_dim)
+
+    layer = _first_decoder_layer(adapter, model)
+    attention = adapter.get_attention_projections(layer)
+    num_heads = model.config.num_attention_heads
+    if attention.q_proj.out_features % num_heads != 0:
+        raise ValueError(
+            "q_proj.out_features ({}) must be divisible by num_attention_heads ({}).".format(
+                attention.q_proj.out_features,
+                num_heads,
+            )
+        )
+    return attention.q_proj.out_features // num_heads
+
+
+class _BaseEstimator:
+    def __init__(
+        self,
+        model: nn.Module,
+        device: str = "cuda",
+        model_adapter: BaseModelAdapter | str | None = None,
+    ):
+        self.adapter = resolve_model_adapter(model, model_adapter)
         self.model = model
         self.device = device
 
@@ -72,18 +98,27 @@ class _BaseActivationElementEstimator(_BaseEstimator):
     and embedding channels.
     """
 
-    def __init__(self, model: nn.Module, device: str = "cuda"):
-        super().__init__(model=model, device=device)
+    def __init__(
+        self,
+        model: nn.Module,
+        device: str = "cuda",
+        model_adapter: BaseModelAdapter | str | None = None,
+    ):
+        super().__init__(model=model, device=device, model_adapter=model_adapter)
         self.model = model.to(device)
-        config = model.config
-        self.num_heads = config.num_attention_heads
-        self.hidden_size = config.hidden_size
-        self.head_dim = self.hidden_size // self.num_heads
-        self.intermediate_size = model.model.layers[0].mlp.gate_proj.out_features
+        self.num_heads = self.model.config.num_attention_heads
+        self.hidden_size = self.model.config.hidden_size
+        self.head_dim = _attention_head_dim(self.adapter, self.model)
+        first_layer = _first_decoder_layer(self.adapter, self.model)
+        self.intermediate_size = self.adapter.get_mlp_projections(first_layer).down_proj.in_features
 
-    def estimate_attention_heads(self, dataloader: DataLoader, agg: str = "l2") -> Dict[int, torch.Tensor]:
+    def estimate_attention_heads(
+        self,
+        dataloader: DataLoader,
+        agg: str = "l2",
+    ) -> Dict[int, torch.Tensor]:
         self.model.eval()
-        layers = self.model.model.layers
+        layers = self.adapter.get_layers(self.model)
         importance_by_layer = {
             idx: torch.zeros(self.num_heads, device=self.device)
             for idx in range(len(layers))
@@ -103,7 +138,11 @@ class _BaseActivationElementEstimator(_BaseEstimator):
             return hook
 
         for layer_idx, layer in enumerate(layers):
-            hooks.append(layer.self_attn.o_proj.register_forward_hook(make_hook(layer_idx)))
+            hooks.append(
+                self.adapter.get_attention_projections(layer).o_proj.register_forward_hook(
+                    make_hook(layer_idx)
+                )
+            )
 
         try:
             with torch.no_grad():
@@ -117,7 +156,11 @@ class _BaseActivationElementEstimator(_BaseEstimator):
             for idx, values in importance_by_layer.items()
         }
 
-    def estimate_mlp_neurons(self, dataloader: DataLoader, agg: str = "l2") -> Dict[int, torch.Tensor]:
+    def estimate_mlp_neurons(
+        self,
+        dataloader: DataLoader,
+        agg: str = "l2",
+    ) -> Dict[int, torch.Tensor]:
         self.model.eval()
         importance_by_layer: Dict[int, torch.Tensor] = {}
         token_counts: Dict[int, int] = defaultdict(int)
@@ -132,10 +175,10 @@ class _BaseActivationElementEstimator(_BaseEstimator):
 
             return hook
 
-        for layer_idx, layer in enumerate(self.model.model.layers):
-            intermediate_size = layer.mlp.down_proj.in_features
-            importance_by_layer[layer_idx] = torch.zeros(intermediate_size, device=self.device)
-            hooks.append(layer.mlp.down_proj.register_forward_hook(make_hook(layer_idx)))
+        for layer_idx, layer in enumerate(self.adapter.get_layers(self.model)):
+            down_proj = self.adapter.get_mlp_projections(layer).down_proj
+            importance_by_layer[layer_idx] = torch.zeros(down_proj.in_features, device=self.device)
+            hooks.append(down_proj.register_forward_hook(make_hook(layer_idx)))
 
         try:
             with torch.no_grad():
@@ -149,13 +192,17 @@ class _BaseActivationElementEstimator(_BaseEstimator):
             for idx, values in importance_by_layer.items()
         }
 
-    def estimate_embedding_channels(self, dataloader: DataLoader, agg: str = "l2") -> Dict[str, torch.Tensor]:
+    def estimate_embedding_channels(
+        self,
+        dataloader: DataLoader,
+        agg: str = "l2",
+    ) -> Dict[str, torch.Tensor]:
         self.model.eval()
         importance_by_key: Dict[str, torch.Tensor] = {}
         token_counts: Dict[str, int] = defaultdict(int)
         hooks = []
 
-        for layer_idx, _ in enumerate(self.model.model.layers):
+        for layer_idx, _ in enumerate(self.adapter.get_layers(self.model)):
             importance_by_key["input_layernorm_{}".format(layer_idx)] = torch.zeros(
                 self.hidden_size,
                 device=self.device,
@@ -175,18 +222,18 @@ class _BaseActivationElementEstimator(_BaseEstimator):
 
             return hook
 
-        for layer_idx, layer in enumerate(self.model.model.layers):
+        for layer_idx, layer in enumerate(self.adapter.get_layers(self.model)):
             hooks.append(
-                layer.input_layernorm.register_forward_hook(
+                self.adapter.get_input_layernorm(layer).register_forward_hook(
                     make_hook("input_layernorm_{}".format(layer_idx))
                 )
             )
             hooks.append(
-                layer.post_attention_layernorm.register_forward_hook(
+                self.adapter.get_post_attention_layernorm(layer).register_forward_hook(
                     make_hook("post_attention_layernorm_{}".format(layer_idx))
                 )
             )
-        hooks.append(self.model.model.norm.register_forward_hook(make_hook("final_norm")))
+        hooks.append(self.adapter.get_final_norm(self.model).register_forward_hook(make_hook("final_norm")))
 
         try:
             with torch.no_grad():
@@ -207,65 +254,47 @@ class _BaseWeightMagnitudeEstimator(_BaseEstimator):
     MLP neurons, and attention heads.
     """
 
-    def __init__(self, model: nn.Module, device: str = "cpu"):
-        super().__init__(model=model, device=device)
+    def __init__(
+        self,
+        model: nn.Module,
+        device: str = "cpu",
+        model_adapter: BaseModelAdapter | str | None = None,
+    ):
+        super().__init__(model=model, device=device, model_adapter=model_adapter)
         if not hasattr(model, "config"):
             raise ValueError(
                 "Model does not have a 'config' attribute. Please pass a Hugging Face model."
             )
 
-        config = model.config
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
-        self.num_layers = config.num_hidden_layers
-        self.num_attention_heads = config.num_attention_heads
-        self.num_key_value_heads = getattr(config, "num_key_value_heads", self.num_attention_heads)
-
-        if self.hidden_size % self.num_attention_heads != 0:
-            raise ValueError(
-                "hidden_size ({}) must be divisible by num_attention_heads ({})".format(
-                    self.hidden_size,
-                    self.num_attention_heads,
-                )
-            )
-        if self.num_attention_heads % self.num_key_value_heads != 0:
-            raise ValueError(
-                "num_attention_heads ({}) must be divisible by num_key_value_heads ({})".format(
-                    self.num_attention_heads,
-                    self.num_key_value_heads,
-                )
-            )
-
-        self.head_dim = self.hidden_size // self.num_attention_heads
+        self.hidden_size = model.config.hidden_size
+        self.num_layers = model.config.num_hidden_layers
+        self.num_attention_heads = model.config.num_attention_heads
+        self.num_key_value_heads = getattr(model.config, "num_key_value_heads", self.num_attention_heads)
+        self.head_dim = _attention_head_dim(self.adapter, self.model)
         self._validate_model_structure()
 
     def _validate_model_structure(self) -> None:
-        if not hasattr(self.model, "model"):
-            raise ValueError("The provided model does not have a 'model' attribute.")
-        if not hasattr(self.model.model, "embed_tokens") or not hasattr(self.model.model.embed_tokens, "weight"):
-            raise ValueError("Missing model.model.embed_tokens.weight.")
+        embed_tokens = self.adapter.get_embed_tokens(self.model)
+        if not hasattr(embed_tokens, "weight"):
+            raise ValueError("Missing model embedding weights.")
+
         if self.num_layers == 0:
             return
-        if not hasattr(self.model.model, "layers") or len(self.model.model.layers) == 0:
-            raise ValueError("model.model.layers is missing or empty.")
 
-        first_layer = self.model.model.layers[0]
-        if (
-            not hasattr(first_layer, "mlp")
-            or not hasattr(first_layer.mlp, "gate_proj")
-            or not hasattr(first_layer.mlp.gate_proj, "weight")
+        first_layer = _first_decoder_layer(self.adapter, self.model)
+        mlp = self.adapter.get_mlp_projections(first_layer)
+        if not hasattr(mlp.gate_proj, "weight"):
+            raise ValueError("Missing MLP gate projection weight.")
+
+        attention = self.adapter.get_attention_projections(first_layer)
+        for projection_name, projection in (
+            ("q_proj", attention.q_proj),
+            ("k_proj", attention.k_proj),
+            ("v_proj", attention.v_proj),
+            ("o_proj", attention.o_proj),
         ):
-            raise ValueError("Missing model.model.layers[0].mlp.gate_proj.weight.")
-        if not hasattr(first_layer, "self_attn"):
-            raise ValueError("Missing model.model.layers[0].self_attn.")
-        for projection_name in ("q_proj", "k_proj", "v_proj", "o_proj"):
-            if not hasattr(first_layer.self_attn, projection_name) or not hasattr(
-                getattr(first_layer.self_attn, projection_name),
-                "weight",
-            ):
-                raise ValueError(
-                    "Missing model.model.layers[0].self_attn.{}.weight.".format(projection_name)
-                )
+            if not hasattr(projection, "weight"):
+                raise ValueError("Missing attention {} weight.".format(projection_name))
 
     @staticmethod
     def _calculate_norm(
@@ -285,7 +314,7 @@ class _BaseWeightMagnitudeEstimator(_BaseEstimator):
     def estimate_embedding_channels(self, agg: str = "l2") -> Dict[str, torch.Tensor]:
         self.model.eval()
         with torch.no_grad():
-            embedding_weights = self.model.model.embed_tokens.weight.detach().to(self.device)
+            embedding_weights = self.adapter.get_embed_tokens(self.model).weight.detach().to(self.device)
             importance = self._calculate_norm(embedding_weights, agg, dim=0)
         return {"embedding_channels": importance.cpu()}
 
@@ -293,8 +322,10 @@ class _BaseWeightMagnitudeEstimator(_BaseEstimator):
         self.model.eval()
         importance_by_layer = {}
         with torch.no_grad():
-            for layer_idx, layer in enumerate(self.model.model.layers):
-                gate_projection_weights = layer.mlp.gate_proj.weight.detach().to(self.device)
+            for layer_idx, layer in enumerate(self.adapter.get_layers(self.model)):
+                gate_projection_weights = (
+                    self.adapter.get_mlp_projections(layer).gate_proj.weight.detach().to(self.device)
+                )
                 importance_by_layer[layer_idx] = self._calculate_norm(
                     gate_projection_weights,
                     agg,
@@ -306,27 +337,27 @@ class _BaseWeightMagnitudeEstimator(_BaseEstimator):
         self.model.eval()
         importance_by_layer = {}
         with torch.no_grad():
-            for layer_idx, layer in enumerate(self.model.model.layers):
-                attention = layer.self_attn
+            for layer_idx, layer in enumerate(self.adapter.get_layers(self.model)):
+                attention = self.adapter.get_attention_projections(layer)
 
                 q_weights = attention.q_proj.weight.detach().to(self.device).view(
                     self.num_attention_heads,
                     self.head_dim,
-                    self.hidden_size,
+                    -1,
                 )
                 q_norm = self._calculate_norm(q_weights, agg, dim=(1, 2))
 
                 k_weights = attention.k_proj.weight.detach().to(self.device).view(
                     self.num_key_value_heads,
                     self.head_dim,
-                    self.hidden_size,
+                    -1,
                 )
                 k_norm = self._calculate_norm(k_weights, agg, dim=(1, 2))
 
                 v_weights = attention.v_proj.weight.detach().to(self.device).view(
                     self.num_key_value_heads,
                     self.head_dim,
-                    self.hidden_size,
+                    -1,
                 )
                 v_norm = self._calculate_norm(v_weights, agg, dim=(1, 2))
 
@@ -336,7 +367,7 @@ class _BaseWeightMagnitudeEstimator(_BaseEstimator):
                     v_norm = v_norm.repeat_interleave(repetition_factor)
 
                 o_weights = attention.o_proj.weight.detach().to(self.device).view(
-                    self.hidden_size,
+                    attention.o_proj.out_features,
                     self.num_attention_heads,
                     self.head_dim,
                 )
@@ -352,8 +383,13 @@ class _BaseSimilarityLayerEstimator(_BaseEstimator):
     Estimate similarity-based importance for attention and MLP sublayers.
     """
 
-    def __init__(self, model: nn.Module, device: str = "cuda"):
-        super().__init__(model=model, device=device)
+    def __init__(
+        self,
+        model: nn.Module,
+        device: str = "cuda",
+        model_adapter: BaseModelAdapter | str | None = None,
+    ):
+        super().__init__(model=model, device=device, model_adapter=model_adapter)
         self.model = model.eval().to(device)
         self._inputs: Dict[str, torch.Tensor] = {}
         self._outputs: Dict[str, torch.Tensor] = {}
@@ -376,24 +412,24 @@ class _BaseSimilarityLayerEstimator(_BaseEstimator):
         self._inputs.clear()
         self._outputs.clear()
         self._hooks = []
-        for layer_idx, layer in enumerate(self.model.model.layers):
+        for layer_idx, layer in enumerate(self.adapter.get_layers(self.model)):
             self._hooks.append(
-                layer.input_layernorm.register_forward_hook(
+                self.adapter.get_input_layernorm(layer).register_forward_hook(
                     self._capture_input("attn_in_{}".format(layer_idx))
                 )
             )
             self._hooks.append(
-                layer.self_attn.register_forward_hook(
+                self.adapter.get_attention_module(layer).register_forward_hook(
                     self._capture_output("attn_out_{}".format(layer_idx))
                 )
             )
             self._hooks.append(
-                layer.post_attention_layernorm.register_forward_hook(
+                self.adapter.get_post_attention_layernorm(layer).register_forward_hook(
                     self._capture_input("mlp_in_{}".format(layer_idx))
                 )
             )
             self._hooks.append(
-                layer.mlp.register_forward_hook(
+                self.adapter.get_mlp_module(layer).register_forward_hook(
                     self._capture_output("mlp_out_{}".format(layer_idx))
                 )
             )
@@ -450,8 +486,14 @@ class _BaseSimilarityBlockEstimator(_BaseEstimator):
     Estimate similarity-based importance for contiguous decoder blocks.
     """
 
-    def __init__(self, model: PreTrainedModel, block_size: int, device: str = "cuda"):
-        super().__init__(model=model, device=device)
+    def __init__(
+        self,
+        model: nn.Module,
+        block_size: int,
+        device: str = "cuda",
+        model_adapter: BaseModelAdapter | str | None = None,
+    ):
+        super().__init__(model=model, device=device, model_adapter=model_adapter)
         if not isinstance(block_size, int) or block_size < 1:
             raise ValueError("block_size must be a positive integer")
         self.model = model.eval().to(device)
@@ -475,23 +517,23 @@ class _BaseSimilarityBlockEstimator(_BaseEstimator):
         self._mlp_inputs.clear()
         self._mlp_outputs.clear()
         self._hooks = []
-        for layer_idx, layer in enumerate(self.model.model.layers):
+        for layer_idx, layer in enumerate(self.adapter.get_layers(self.model)):
             self._hooks.append(
-                layer.input_layernorm.register_forward_hook(
+                self.adapter.get_input_layernorm(layer).register_forward_hook(
                     lambda module, inputs, output, key=layer_idx: self._attn_inputs.update(
                         {key: inputs[0].detach().clone()}
                     )
                 )
             )
             self._hooks.append(
-                layer.post_attention_layernorm.register_forward_hook(
+                self.adapter.get_post_attention_layernorm(layer).register_forward_hook(
                     lambda module, inputs, output, key=layer_idx: self._mlp_inputs.update(
                         {key: inputs[0].detach().clone()}
                     )
                 )
             )
             self._hooks.append(
-                layer.mlp.register_forward_hook(
+                self.adapter.get_mlp_module(layer).register_forward_hook(
                     lambda module, inputs, output, key=layer_idx: self._mlp_outputs.update(
                         {
                             key: (
@@ -554,8 +596,9 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
         tokenizer: Any,
         block_size: int,
         device: str = "cpu",
+        model_adapter: BaseModelAdapter | str | None = None,
     ):
-        super().__init__(model=model, device=device)
+        super().__init__(model=model, device=device, model_adapter=model_adapter)
         if not isinstance(block_size, int) or block_size < 1:
             raise ValueError("block_size must be a positive integer")
 
@@ -563,14 +606,7 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.device = device
-
-        if not hasattr(model, "config"):
-            raise ValueError("Model does not have a 'config' attribute.")
-        if not hasattr(model, "model") or not hasattr(model.model, "layers"):
-            raise ValueError("Model structure (model.model.layers) not as expected.")
-
-        self.config = model.config
-        self.num_layers = self.config.num_hidden_layers
+        self.num_layers = self.model.config.num_hidden_layers
         if block_size > self.num_layers:
             raise ValueError(
                 "block_size ({}) cannot be greater than num_layers ({})".format(
@@ -638,6 +674,7 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
 
         max_start_idx = self.num_layers - self.block_size + 1
         block_importances = []
+        layers = self.adapter.get_layers(self.model)
 
         for start_idx in tqdm(
             range(max_start_idx),
@@ -647,12 +684,12 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
             original_layers = {}
             try:
                 for layer_idx in layer_indices:
-                    original_layers[layer_idx] = self.model.model.layers[layer_idx]
-                    self.model.model.layers[layer_idx] = IdentityLayer().to(self.device)
+                    original_layers[layer_idx] = layers[layer_idx]
+                    layers[layer_idx] = self.adapter.make_identity_decoder_layer().to(self.device)
                 current_perplexity = self._calculate_perplexity(self.model, dataloader, n_samples)
             finally:
                 for layer_idx, layer in original_layers.items():
-                    self.model.model.layers[layer_idx] = layer
+                    layers[layer_idx] = layer
 
             if importance_metric == "perplexity_increase":
                 score = current_perplexity - baseline_perplexity

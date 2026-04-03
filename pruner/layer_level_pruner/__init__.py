@@ -1,6 +1,7 @@
-from .LayerPruner import Llama3LayerPruner, Qwen2LayerPruner
+from .LayerPruner import LayerPruner, Llama3LayerPruner, Qwen2LayerPruner
 
 __all__ = [
+    "LayerPruner",
     "Llama3LayerPruner",
     "Qwen2LayerPruner",
 ]

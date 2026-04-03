@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from transformers import LlamaForCausalLM, Qwen2ForCausalLM
+from soict_llm_pruner_core import ESTIMATOR_REGISTRY
 
 from ._shared import _BaseSimilarityLayerEstimator
 
 
-class Llama3SimilarityLayerEstimator(_BaseSimilarityLayerEstimator):
-    model_cls = LlamaForCausalLM
-    model_name = "LlamaForCausalLM"
+@ESTIMATOR_REGISTRY.register("layer.similarity")
+class SimilarityLayerEstimator(_BaseSimilarityLayerEstimator):
+    """Adapter-backed layer similarity estimator."""
 
 
-class Qwen2SimilarityLayerEstimator(_BaseSimilarityLayerEstimator):
-    model_cls = Qwen2ForCausalLM
-    model_name = "Qwen2ForCausalLM"
+class Llama3SimilarityLayerEstimator(SimilarityLayerEstimator):
+    """Backward-compatible alias for legacy code."""
+
+
+class Qwen2SimilarityLayerEstimator(SimilarityLayerEstimator):
+    """Backward-compatible alias for legacy code."""
 
 
 __all__ = [
+    "SimilarityLayerEstimator",
     "Llama3SimilarityLayerEstimator",
     "Qwen2SimilarityLayerEstimator",
 ]

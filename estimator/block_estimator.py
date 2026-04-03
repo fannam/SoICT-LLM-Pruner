@@ -1,31 +1,39 @@
 from __future__ import annotations
 
-from transformers import LlamaForCausalLM, Qwen2ForCausalLM
+from soict_llm_pruner_core import ESTIMATOR_REGISTRY
 
 from ._shared import _BaseBlockPerplexityEstimator, _BaseSimilarityBlockEstimator
 
 
-class Llama3SimilarityBlockEstimator(_BaseSimilarityBlockEstimator):
-    model_cls = LlamaForCausalLM
-    model_name = "LlamaForCausalLM"
+@ESTIMATOR_REGISTRY.register("block.similarity")
+class SimilarityBlockEstimator(_BaseSimilarityBlockEstimator):
+    """Adapter-backed block similarity estimator."""
 
 
-class Qwen2SimilarityBlockEstimator(_BaseSimilarityBlockEstimator):
-    model_cls = Qwen2ForCausalLM
-    model_name = "Qwen2ForCausalLM"
+@ESTIMATOR_REGISTRY.register("block.perplexity")
+class BlockPerplexityEstimator(_BaseBlockPerplexityEstimator):
+    """Adapter-backed block perplexity estimator."""
 
 
-class Llama3BlockPerplexityEstimator(_BaseBlockPerplexityEstimator):
-    model_cls = LlamaForCausalLM
-    model_name = "LlamaForCausalLM"
+class Llama3SimilarityBlockEstimator(SimilarityBlockEstimator):
+    """Backward-compatible alias for legacy code."""
 
 
-class Qwen2BlockPerplexityEstimator(_BaseBlockPerplexityEstimator):
-    model_cls = Qwen2ForCausalLM
-    model_name = "Qwen2ForCausalLM"
+class Qwen2SimilarityBlockEstimator(SimilarityBlockEstimator):
+    """Backward-compatible alias for legacy code."""
+
+
+class Llama3BlockPerplexityEstimator(BlockPerplexityEstimator):
+    """Backward-compatible alias for legacy code."""
+
+
+class Qwen2BlockPerplexityEstimator(BlockPerplexityEstimator):
+    """Backward-compatible alias for legacy code."""
 
 
 __all__ = [
+    "SimilarityBlockEstimator",
+    "BlockPerplexityEstimator",
     "Llama3SimilarityBlockEstimator",
     "Qwen2SimilarityBlockEstimator",
     "Llama3BlockPerplexityEstimator",

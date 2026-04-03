@@ -1,6 +1,6 @@
 # SOICT-LLM-Pruner
 
-A tri-level framework for structured pruning of Large Language Models (LLMs). Currently supports Llama3 and Qwen2 models.
+A tri-level framework for structured pruning of Large Language Models (LLMs). The current release ships with separate Llama3 and Qwen2 adapters, and the codebase is organized around registries plus explicit model-adapter contracts so new estimators, model families, and pruning methods can be plugged in without forcing every model into the same internal layout.
 
 ![Framework Overview](assets/tri-level-framework.png "SOICT-LLM-Pruner Framework")
 
@@ -23,6 +23,8 @@ pip install -e .
 - **Block-level Pruning**: Remove Decoder blocks
 - Support for Llama3 and Qwen2 models
 - Multiple importance estimation methods
+- Explicit per-model adapter architecture, with an optional shared helper only for decoder stacks that truly share the same layout
+- Registry-based extension points for new estimators and pruning strategies
 
 ### Element-level Pruning
 ![Element Pruning Overview](assets/element_pruning_overview.png "Element-level Pruning")
@@ -39,9 +41,8 @@ pip install -e .
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from estimator.element_estimator import Llama3ActivationElementEstimator
-from estimator.layer_estimator import Llama3SimilarityLayerEstimator
-from estimator.block_estimator import Llama3SimilarityBlockEstimator
+from estimator import create_estimator
+from pruner import create_pruner
 ```
 
 ### 2. Load Model and Prepare Data
@@ -64,9 +65,7 @@ On the old version, we passed the dataloader when we initialize the pruner, whic
 
 ```python
 # Initialize estimator
-from estimator.element_estimator import Llama3ActivationElementEstimator
-
-element_estimator = Llama3ActivationElementEstimator(model)
+element_estimator = create_estimator("element.activation", model, device="cuda")
 
 # Estimate attention head importance
 head_importance = element_estimator.estimate_attention_heads(dataloader, agg="l2")
@@ -83,10 +82,8 @@ embedding_importance = element_estimator.estimate_embedding_channels(dataloader,
 #### Layer-level Importance
 
 ```python
-from estimator.layer_estimator import Llama3SimilarityLayerEstimator
-
 # Initialize estimator
-layer_estimator = Llama3SimilarityLayerEstimator(model)
+layer_estimator = create_estimator("layer.similarity", model, device="cuda")
 
 # Estimate importance of attention and MLP layers
 layer_importance = layer_estimator.estimate(dataloader)
@@ -96,10 +93,8 @@ layer_importance = layer_estimator.estimate(dataloader)
 #### Block-level Importance
 
 ```python
-from estimator.block_estimator import Llama3SimilarityBlockEstimator
-
 # Initialize estimator with desired contiguous block size
-block_estimator = Llama3SimilarityBlockEstimator(model, block_size=1)
+block_estimator = create_estimator("block.similarity", model, block_size=1, device="cuda")
 
 # Estimate importance of contiguous blocks
 block_importance = block_estimator.estimate(dataloader)
@@ -124,14 +119,85 @@ head_importance = element_estimator.estimate_attention_heads(dataloader, agg="va
 After obtaining importance scores, you can use them to prune the model:
 
 ```python
-from pruner.element_level_pruner.ElementPruner import Llama3ElementPruner
-from pruner.layer_level_pruner.LayerPruner import Llama3LayerPruner
-from pruner.block_level_pruner.BlockPruner import Llama3BlockPruner
+element_pruner = create_pruner("element", model, device="cuda")
+pruned_model = element_pruner.apply(
+    "attention_group",
+    head_importance=head_importance,
+    target_group=7,
+)
 
-element_pruner = Llama3ElementPruner(model, 'cuda')
+```
 
-pruned_model = element_pruner.prune_attention_group(head_importance=head_importance, target_group=7)
+Legacy classes such as `Llama3ActivationElementEstimator`, `Qwen2SimilarityLayerEstimator`, or `Llama3ElementPruner` are still available as backward-compatible wrappers.
 
+### Extending the Framework
+
+The refactor introduces three extension points:
+
+1. **New model family**: implement a `BaseModelAdapter` for that family. If the model really follows the same decoder layout as Llama/Qwen2, it may reuse `DecoderModelAdapter` as a helper base.
+2. **New importance estimator**: register a new estimator class in `ESTIMATOR_REGISTRY`.
+3. **New pruning method**: register a new strategy in `PRUNING_STRATEGY_REGISTRY`.
+
+Example: register a new decoder-only model that follows the same `model.model.layers[*].self_attn/mlp` layout:
+
+```python
+from transformers import MistralForCausalLM
+
+from soict_llm_pruner_core import DecoderModelAdapter, register_model_adapter
+
+register_model_adapter(
+    DecoderModelAdapter(
+        name="mistral",
+        model_cls=MistralForCausalLM,
+    )
+)
+```
+
+Example: if a new family uses a different layout, implement a dedicated adapter instead of forcing it through the shared decoder helper:
+
+```python
+from soict_llm_pruner_core import BaseModelAdapter, register_model_adapter
+
+
+class MyMoEAdapter(BaseModelAdapter):
+    def get_layers(self, model):
+        return model.transformer.blocks
+
+    def get_embed_tokens(self, model):
+        return model.transformer.token_embeddings
+
+    def get_lm_head(self, model):
+        return model.output_projection
+
+    # Implement the remaining adapter methods for this architecture.
+
+
+register_model_adapter(MyMoEAdapter(name="my-moe", model_cls=MyMoEForCausalLM))
+```
+
+Example: add a new pruning strategy, such as expert pruning for MoE models:
+
+```python
+from pruner.element_level_pruner import BaseElementPruningStrategy
+from soict_llm_pruner_core import PRUNING_STRATEGY_REGISTRY
+
+
+@PRUNING_STRATEGY_REGISTRY.register("element.expert")
+class ExpertPruningStrategy(BaseElementPruningStrategy):
+    def prune(self, pruner, expert_importance, target_num_experts):
+        # Implement expert selection and weight transfer here.
+        raise NotImplementedError
+```
+
+You can inspect the available built-in components at runtime:
+
+```python
+from estimator import available_estimators
+from pruner import available_element_pruning_strategies, available_pruners
+
+print(available_estimators())
+print(available_pruners())
+print(available_element_pruning_strategies())
 ```
 
 For more examples, please visit `Notebook/Demo_library.ipynb` or `Notebook/Demo_gradio.ipynb`.
