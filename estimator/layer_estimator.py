@@ -18,8 +18,13 @@ class Qwen2SimilarityLayerEstimator(SimilarityLayerEstimator):
     """Backward-compatible alias for legacy code."""
 
 
+class MistralSimilarityLayerEstimator(SimilarityLayerEstimator):
+    """Backward-compatible alias for legacy code."""
+
+
 __all__ = [
     "SimilarityLayerEstimator",
     "Llama3SimilarityLayerEstimator",
     "Qwen2SimilarityLayerEstimator",
+    "MistralSimilarityLayerEstimator",
 ]

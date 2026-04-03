@@ -18,8 +18,13 @@ class Qwen2BlockPruner(BlockPruner):
     """Backward-compatible alias for legacy code."""
 
 
+class MistralBlockPruner(BlockPruner):
+    """Backward-compatible alias for legacy code."""
+
+
 __all__ = [
     "BlockPruner",
     "Llama3BlockPruner",
     "Qwen2BlockPruner",
+    "MistralBlockPruner",
 ]

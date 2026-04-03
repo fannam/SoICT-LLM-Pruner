@@ -10,14 +10,14 @@ if readme_path.exists():
 setup(
     name="soict-llm-pruner",
     version="0.1.0",
-    description="A tri-level framework for structured pruning (Currently supports Llama and Qwen2)",
+    description="A tri-level framework for structured pruning (Currently supports Llama, Qwen2, and Mistral)",
     author="Phan Hoang Nam",
     author_email="phanhoangnam234@gmail.com/nam.ph215434@sis.hust.edu.vn",
     packages=find_packages(),
     py_modules=["utils"],
     install_requires=[
         "torch>=2.0.0",
-        "transformers>=4.30.0",
+        "transformers>=4.38.2",
         "tqdm>=4.65.0",
         "datasets>=2.14.0",
         "numpy>=1.24.0",

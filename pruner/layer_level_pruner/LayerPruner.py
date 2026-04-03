@@ -18,8 +18,13 @@ class Qwen2LayerPruner(LayerPruner):
     """Backward-compatible alias for legacy code."""
 
 
+class MistralLayerPruner(LayerPruner):
+    """Backward-compatible alias for legacy code."""
+
+
 __all__ = [
     "LayerPruner",
     "Llama3LayerPruner",
     "Qwen2LayerPruner",
+    "MistralLayerPruner",
 ]

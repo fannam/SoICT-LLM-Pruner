@@ -594,10 +594,15 @@ class Qwen2ElementPruner(ElementPruner):
     """Backward-compatible alias for legacy code."""
 
 
+class MistralElementPruner(ElementPruner):
+    """Backward-compatible alias for legacy code."""
+
+
 __all__ = [
     "BaseElementPruningStrategy",
     "ElementPruner",
     "Llama3ElementPruner",
     "Qwen2ElementPruner",
+    "MistralElementPruner",
     "available_element_pruning_strategies",
 ]

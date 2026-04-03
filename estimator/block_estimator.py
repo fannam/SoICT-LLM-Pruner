@@ -23,6 +23,10 @@ class Qwen2SimilarityBlockEstimator(SimilarityBlockEstimator):
     """Backward-compatible alias for legacy code."""
 
 
+class MistralSimilarityBlockEstimator(SimilarityBlockEstimator):
+    """Backward-compatible alias for legacy code."""
+
+
 class Llama3BlockPerplexityEstimator(BlockPerplexityEstimator):
     """Backward-compatible alias for legacy code."""
 
@@ -31,11 +35,17 @@ class Qwen2BlockPerplexityEstimator(BlockPerplexityEstimator):
     """Backward-compatible alias for legacy code."""
 
 
+class MistralBlockPerplexityEstimator(BlockPerplexityEstimator):
+    """Backward-compatible alias for legacy code."""
+
+
 __all__ = [
     "SimilarityBlockEstimator",
     "BlockPerplexityEstimator",
     "Llama3SimilarityBlockEstimator",
     "Qwen2SimilarityBlockEstimator",
+    "MistralSimilarityBlockEstimator",
     "Llama3BlockPerplexityEstimator",
     "Qwen2BlockPerplexityEstimator",
+    "MistralBlockPerplexityEstimator",
 ]

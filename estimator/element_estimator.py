@@ -23,6 +23,10 @@ class Qwen2ActivationElementEstimator(ActivationElementEstimator):
     """Backward-compatible alias for legacy code."""
 
 
+class MistralActivationElementEstimator(ActivationElementEstimator):
+    """Backward-compatible alias for legacy code."""
+
+
 class Llama3WeightMagnitudeEstimator(WeightMagnitudeElementEstimator):
     """Backward-compatible alias for legacy code."""
 
@@ -31,11 +35,17 @@ class Qwen2WeightMagnitudeEstimator(WeightMagnitudeElementEstimator):
     """Backward-compatible alias for legacy code."""
 
 
+class MistralWeightMagnitudeEstimator(WeightMagnitudeElementEstimator):
+    """Backward-compatible alias for legacy code."""
+
+
 __all__ = [
     "ActivationElementEstimator",
     "WeightMagnitudeElementEstimator",
     "Llama3ActivationElementEstimator",
     "Qwen2ActivationElementEstimator",
+    "MistralActivationElementEstimator",
     "Llama3WeightMagnitudeEstimator",
     "Qwen2WeightMagnitudeEstimator",
+    "MistralWeightMagnitudeEstimator",
 ]

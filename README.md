@@ -1,6 +1,6 @@
 # SOICT-LLM-Pruner
 
-A tri-level framework for structured pruning of Large Language Models (LLMs). The current release ships with separate Llama3 and Qwen2 adapters, and the codebase is organized around registries plus explicit model-adapter contracts so new estimators, model families, and pruning methods can be plugged in without forcing every model into the same internal layout.
+A tri-level framework for structured pruning of Large Language Models (LLMs). The current release ships with separate Llama3, Qwen2, and Mistral adapters, and the codebase is organized around registries plus explicit model-adapter contracts so new estimators, model families, and pruning methods can be plugged in without forcing every model into the same internal layout.
 
 ![Framework Overview](assets/tri-level-framework.png "SOICT-LLM-Pruner Framework")
 
@@ -21,7 +21,7 @@ pip install -e .
 - **Element-level Pruning**: Prune individual attention heads, attention groups, MLP neurons and embedding channels
 - **Layer-level Pruning**: Remove entire attention or MLP (Feed forward) layers
 - **Block-level Pruning**: Remove Decoder blocks
-- Support for Llama3 and Qwen2 models
+- Support for Llama3, Qwen2, and Mistral models
 - Multiple importance estimation methods
 - Explicit per-model adapter architecture, with an optional shared helper only for decoder stacks that truly share the same layout
 - Registry-based extension points for new estimators and pruning strategies
@@ -128,27 +128,25 @@ pruned_model = element_pruner.apply(
 
 ```
 
-Legacy classes such as `Llama3ActivationElementEstimator`, `Qwen2SimilarityLayerEstimator`, or `Llama3ElementPruner` are still available as backward-compatible wrappers.
+Legacy classes such as `Llama3ActivationElementEstimator`, `Qwen2SimilarityLayerEstimator`, `MistralSimilarityBlockEstimator`, or `Llama3ElementPruner` are still available as backward-compatible wrappers.
 
 ### Extending the Framework
 
 The refactor introduces three extension points:
 
-1. **New model family**: implement a `BaseModelAdapter` for that family. If the model really follows the same decoder layout as Llama/Qwen2, it may reuse `DecoderModelAdapter` as a helper base.
+1. **New model family**: implement a `BaseModelAdapter` for that family. The built-in Llama3, Qwen2, and Mistral adapters are intentionally kept as separate concrete implementations. If a new model really follows the same decoder layout, it may reuse `DecoderModelAdapter` as a helper base.
 2. **New importance estimator**: register a new estimator class in `ESTIMATOR_REGISTRY`.
 3. **New pruning method**: register a new strategy in `PRUNING_STRATEGY_REGISTRY`.
 
 Example: register a new decoder-only model that follows the same `model.model.layers[*].self_attn/mlp` layout:
 
 ```python
-from transformers import MistralForCausalLM
-
 from soict_llm_pruner_core import DecoderModelAdapter, register_model_adapter
 
 register_model_adapter(
     DecoderModelAdapter(
-        name="mistral",
-        model_cls=MistralForCausalLM,
+        name="my-decoder-model",
+        model_cls=MyDecoderModelForCausalLM,
     )
 )
 ```
@@ -245,13 +243,14 @@ The hybrid approach combines these losses with configurable weights:
 ## Supported Models
 
 - Llama3
-- Qwen2 
+- Qwen2
+- Mistral
 
 ## Requirements
 
 - Python >= 3.8
 - PyTorch >= 2.0.0
-- Transformers >= 4.30.0
+- Transformers >= 4.38.2
 - tqdm >= 4.65.0
 - datasets >= 2.14.0
 - numpy >= 1.24.0
