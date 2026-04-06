@@ -20,13 +20,17 @@ def test_public_namespaces_smoke_import():
 
 
 def test_distillation_namespace_smoke_import():
-    import pytest
-
-    pytest.importorskip("accelerate")
-    pytest.importorskip("matplotlib")
-
-    from soict_llm_pruner.distillation import HybridDistiller, LogitsDistiller, TeacherCorrection
+    from soict_llm_pruner.distillation import HybridDistiller, LogitsDistiller
 
     assert HybridDistiller is not None
     assert LogitsDistiller is not None
+
+
+def test_teacher_correction_namespace_smoke_import():
+    import pytest
+
+    pytest.importorskip("accelerate")
+
+    from soict_llm_pruner.distillation import TeacherCorrection
+
     assert TeacherCorrection is not None

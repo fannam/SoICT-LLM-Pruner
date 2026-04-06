@@ -25,7 +25,9 @@ def parse_args():
     parser.add_argument("--per-device-eval-batch-size", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--num-epochs", type=int, default=5)
+    parser.add_argument("--num-warmup-steps", type=int, default=100)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
+    parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--wandb-project", default=None)
     parser.add_argument("--wandb-run-name", default="teacher_correction")
     return parser.parse_args()
@@ -51,7 +53,10 @@ def main() -> None:
             truncation=True,
             max_length=args.max_length,
         )
-        batch["labels"] = batch["input_ids"].copy()
+        batch["labels"] = [
+            [token if mask else -100 for token, mask in zip(input_ids, attention_mask)]
+            for input_ids, attention_mask in zip(batch["input_ids"], batch["attention_mask"])
+        ]
         return batch
 
     train_ds = train_raw.map(tokenize, batched=True, remove_columns=train_raw.column_names)
@@ -65,7 +70,9 @@ def main() -> None:
     config = {
         "learning_rate": args.learning_rate,
         "num_epochs": args.num_epochs,
+        "num_warmup_steps": args.num_warmup_steps,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "max_grad_norm": args.max_grad_norm,
         "per_device_train_batch_size": args.per_device_train_batch_size,
         "wandb_project": args.wandb_project,
         "wandb_run_name": args.wandb_run_name,
@@ -78,6 +85,7 @@ def main() -> None:
         train_loader=train_loader,
         val_loader=eval_loader,
         config=config,
+        tokenizer=tokenizer,
     )
     trainer.train()
     trainer.save_model(args.output_dir)

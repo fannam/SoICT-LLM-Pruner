@@ -1,9 +1,21 @@
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
 import torch
-import torch.nn.functional as F
 
+from ._common import (
+    get_output_attr,
+    masked_feature_loss,
+    masked_logits_loss,
+    maybe_finish_wandb,
+    maybe_get_output_attr,
+    maybe_init_wandb,
+    maybe_log_wandb,
+    plot_history,
+    prepare_causal_lm_batch,
+    resolve_device,
+    sync_scheduler_added_param_group_lrs,
+    zero_grad,
+)
 from .wrappers import DistilModel
 
 
@@ -12,146 +24,302 @@ class HybridDistiller:
         self,
         teacher_model,
         student_model,
-        tokenizer,
-        optimizer,
-        scheduler,
-        use_wandb=False,
-        wandb_key=None,
-        project_name=None,
-        run_name=None,
+        tokenizer=None,
+        optimizer=None,
+        scheduler=None,
+        use_wandb: bool = False,
+        wandb_key: str | None = None,
+        project_name: str | None = None,
+        run_name: str | None = None,
     ):
         self.teacher_model = teacher_model
         self.student_model = student_model
         self.tokenizer = tokenizer
         self.optimizer = optimizer
         self.scheduler = scheduler
-        # wandb optional
-        self.use_wandb = use_wandb and wandb_key is not None
+        self.use_wandb = use_wandb
         self.wandb_key = wandb_key
         self.project_name = project_name
         self.run_name = run_name
+        self.history = {"train_loss": [], "val_loss": []}
+        self.distill_model = None
+        self.teacher_kept_layers = None
+        self.last_plot = None
 
-    def logits_loss(self, student_logits, teacher_logits, labels, temperature=2.0, alpha=0.5):
-        log_student = F.log_softmax(student_logits / temperature, dim=-1)
-        soft_teacher = F.softmax(teacher_logits / temperature, dim=-1)
-        forward_kl = F.kl_div(log_student, soft_teacher, reduction='batchmean') * (temperature ** 2)
-        ce_loss = F.cross_entropy(student_logits, labels)
-        return alpha * ce_loss + (1 - alpha) * forward_kl
+    def logits_loss(self, student_logits, teacher_logits, labels, loss_mask, temperature=2.0, alpha=0.5):
+        return masked_logits_loss(
+            student_logits=student_logits,
+            teacher_logits=teacher_logits,
+            labels=labels,
+            loss_mask=loss_mask,
+            temperature=temperature,
+            alpha=alpha,
+        )
 
     def feature_loss_selected_layers(self, student_feats, teacher_feats, projectors, mask):
-        losses = []
-        for proj, s_feat, t_feat in zip(projectors, student_feats, teacher_feats):
-            s_feat = s_feat.float()
-            p = proj(s_feat)
-            p = p[mask]
-            t = t_feat.float()[mask]
-            losses.append(F.mse_loss(p, t, reduction='mean'))
-        return torch.stack(losses).mean()
+        return masked_feature_loss(student_feats, teacher_feats, projectors, mask)
 
-    def distill(
-        self,
-        train_loader,
-        val_loader,
-        device_teacher,
-        device_student,
-        epochs=1,
-        grad_accumulation_steps=8,
-        alpha=0.1,
-        gamma=0.1,
-        temperature=2.0,
-        block_layers_to_prune=None
-    ):
-        self.teacher_model.eval()
-
+    def _resolve_teacher_kept_layers(self, block_layers_to_prune):
         total_layers = self.teacher_model.config.num_hidden_layers
-        prune = block_layers_to_prune or getattr(self.student_model.config, 'block_layers_to_prune', None)
-        teacher_kept = [i for i in range(total_layers) if not prune or i not in prune]
+        prune = block_layers_to_prune
+        if prune is None:
+            prune = getattr(self.student_model.config, "block_layers_to_prune", None)
+        teacher_kept = [idx for idx in range(total_layers) if idx not in set(prune or [])]
         if self.student_model.config.num_hidden_layers != len(teacher_kept):
             raise ValueError(
                 f"Student has {self.student_model.config.num_hidden_layers} layers, expected {len(teacher_kept)}."
             )
+        return teacher_kept
 
-        student_dim = self.student_model.config.hidden_size
-        teacher_dim = self.teacher_model.config.hidden_size
-        wrapper = DistilModel(self.student_model, student_dim, teacher_dim, teacher_kept).to(device_student)
+    def _ensure_distill_model(self, device_student, block_layers_to_prune):
+        teacher_kept = self._resolve_teacher_kept_layers(block_layers_to_prune)
+        rebuild = self.distill_model is None or self.teacher_kept_layers != teacher_kept
+        if rebuild:
+            student_dim = self.student_model.config.hidden_size
+            teacher_dim = self.teacher_model.config.hidden_size
+            self.distill_model = DistilModel(
+                self.student_model,
+                student_dim,
+                teacher_dim,
+                teacher_kept,
+            )
+            self.teacher_kept_layers = teacher_kept
+            self._attach_projector_params()
+
+        self.distill_model.to(device_student)
+        return self.distill_model, teacher_kept
+
+    def _attach_projector_params(self) -> None:
+        if self.optimizer is None or self.distill_model is None:
+            return
+
+        projector_params = [
+            parameter
+            for parameter in self.distill_model.projectors.parameters()
+            if parameter.requires_grad
+        ]
+        if not projector_params:
+            return
+
+        existing_ids = {
+            id(parameter)
+            for group in self.optimizer.param_groups
+            for parameter in group["params"]
+        }
+        missing_params = [parameter for parameter in projector_params if id(parameter) not in existing_ids]
+        if not missing_params:
+            return
+
+        group_config = {
+            key: value
+            for key, value in self.optimizer.param_groups[0].items()
+            if key != "params"
+        }
+        group_config["params"] = missing_params
+        self.optimizer.add_param_group(group_config)
+        sync_scheduler_added_param_group_lrs(self.optimizer, self.scheduler)
+
+    def _forward_teacher(self, batch, device_teacher):
+        teacher_batch = {
+            "input_ids": batch["input_ids"].to(device_teacher),
+            "attention_mask": batch.get("attention_mask", None),
+        }
+        if teacher_batch["attention_mask"] is not None:
+            teacher_batch["attention_mask"] = teacher_batch["attention_mask"].to(device_teacher)
+        return self.teacher_model(**teacher_batch, output_hidden_states=True)
+
+    def _forward_student(self, distill_model, input_ids, attention_mask):
+        kwargs = {"input_ids": input_ids}
+        if attention_mask is not None:
+            kwargs["attention_mask"] = attention_mask
+        return distill_model(**kwargs)
+
+    def _extract_hidden_states(self, outputs, model_name: str):
+        hidden_states = maybe_get_output_attr(outputs, "hidden_states")
+        if hidden_states is None:
+            raise ValueError(f"{model_name} must return `hidden_states` when `output_hidden_states=True`.")
+        return hidden_states
+
+    def _run_validation(
+        self,
+        val_loader,
+        *,
+        distill_model,
+        teacher_kept,
+        device_teacher,
+        device_student,
+        temperature: float,
+        alpha: float,
+        gamma: float,
+    ) -> float | None:
+        if val_loader is None:
+            return None
+
+        distill_model.eval()
+        total_loss = 0.0
+        total_tokens = 0
+        with torch.no_grad():
+            for batch in val_loader:
+                ids, mask, labels, loss_mask = prepare_causal_lm_batch(batch, device_student)
+                teacher_outputs = self._forward_teacher(batch, device_teacher)
+                teacher_logits = get_output_attr(teacher_outputs, "logits")[..., :-1, :].to(device_student)
+                student_outputs = self._forward_student(distill_model, ids, mask)
+                student_logits = get_output_attr(student_outputs, "logits")[..., :-1, :]
+
+                kl_ce = self.logits_loss(student_logits, teacher_logits, labels, loss_mask, temperature, alpha)
+                student_hidden_states = self._extract_hidden_states(student_outputs, "Student outputs")
+                teacher_hidden_states = self._extract_hidden_states(teacher_outputs, "Teacher outputs")
+                student_feats = [student_hidden_states[idx + 1][..., :-1, :] for idx in range(len(teacher_kept))]
+                teacher_feats = [teacher_hidden_states[idx + 1][..., :-1, :].to(device_student) for idx in teacher_kept]
+                f_loss = self.feature_loss_selected_layers(
+                    student_feats,
+                    teacher_feats,
+                    distill_model.projectors,
+                    loss_mask,
+                )
+
+                valid_tokens = int(loss_mask.sum().item())
+                total_loss += (kl_ce.item() + gamma * f_loss.item()) * valid_tokens
+                total_tokens += valid_tokens
+        distill_model.train()
+
+        if total_tokens == 0:
+            raise ValueError("Validation loader did not contain any valid target tokens.")
+        return total_loss / total_tokens
+
+    def distill(
+        self,
+        train_loader,
+        val_loader=None,
+        device_teacher=None,
+        device_student=None,
+        epochs: int = 1,
+        grad_accumulation_steps: int = 8,
+        alpha: float = 0.1,
+        gamma: float = 0.1,
+        temperature: float = 2.0,
+        block_layers_to_prune=None,
+        plot: bool = False,
+        show_plot: bool = False,
+    ):
+        if self.optimizer is None:
+            raise ValueError("`optimizer` is required for distillation.")
+        if grad_accumulation_steps <= 0:
+            raise ValueError("`grad_accumulation_steps` must be > 0.")
+        if epochs <= 0:
+            raise ValueError("`epochs` must be > 0.")
+
+        device_teacher = resolve_device(self.teacher_model, device_teacher)
+        device_student = resolve_device(self.student_model, device_student)
+
         self.teacher_model.to(device_teacher)
-        wrapper.train()
+        self.teacher_model.eval()
+        self.teacher_model.requires_grad_(False)
+        distill_model, teacher_kept = self._ensure_distill_model(device_student, block_layers_to_prune)
+        distill_model.train()
 
-        if self.use_wandb:
-            import wandb
-            wandb.login(key=self.wandb_key)
-            wandb.init(project=self.project_name, name=self.run_name, reinit=True)
+        run = maybe_init_wandb(
+            enabled=self.use_wandb,
+            project_name=self.project_name,
+            run_name=self.run_name,
+            wandb_key=self.wandb_key,
+        )
 
-        val_loss_history = []
-        step = 0
-        for epoch in range(epochs):
+        self.history = {"train_loss": [], "val_loss": []}
+        global_step = 0
+        zero_grad(self.optimizer)
 
-            for batch in train_loader:
-                ids = batch['input_ids'].to(device_student)
-                mask = batch['attention_mask'].to(device_student)
-                labels = batch['labels'][:,1:].to(device_student).reshape(-1)
-                with torch.no_grad():
-                    t_out = self.teacher_model(input_ids=batch['input_ids'].to(device_teacher),
-                                               attention_mask=batch['attention_mask'].to(device_teacher),
-                                               output_hidden_states=True)
-                t_logits = t_out.logits[:,:-1,:].reshape(-1, t_out.logits.size(-1)).to(device_student)
-                s_out = wrapper(input_ids=ids, attention_mask=mask)
-                s_logits = s_out.logits[:,:-1,:].reshape(-1, s_out.logits.size(-1))
-                kl_ce = self.logits_loss(s_logits, t_logits, labels, temperature, alpha)
-                student_feats = [s_out.hidden_states[i+1][:,:-1,:] for i in range(len(teacher_kept))]
-                teacher_feats = [t_out.hidden_states[i+1][:,:-1,:].to(device_student) for i in teacher_kept]
-                pad_mask = mask[:,1:].bool()
-                f_loss = self.feature_loss_selected_layers(student_feats, teacher_feats, wrapper.projectors, pad_mask)
-                loss = (kl_ce + gamma*f_loss) / grad_accumulation_steps
-                loss.backward()
-                if (step+1) % grad_accumulation_steps == 0:
-                    self.optimizer.step()
-                    self.scheduler.step()
-                    self.optimizer.zero_grad()
-                    if self.use_wandb:
-                        wandb.log({'train_loss': loss.item()*grad_accumulation_steps,
-                                   'distill_loss': kl_ce.item(), 'feature_loss': f_loss.item(),
-                                   'epoch': epoch})
-                step += 1
+        try:
+            for epoch in range(epochs):
+                epoch_loss = 0.0
+                epoch_tokens = 0
+                micro_batches = 0
 
-            wrapper.eval()
-            total_val = 0.0
-            count = 0
-            with torch.no_grad():
-                for batch in val_loader:
-                    ids = batch['input_ids'].to(device_student)
-                    mask = batch['attention_mask'].to(device_student)
-                    labels = batch['labels'][:,1:].to(device_student).reshape(-1)
-                    t_out = self.teacher_model(input_ids=batch['input_ids'].to(device_teacher),
-                                               attention_mask=batch['attention_mask'].to(device_teacher),
-                                               output_hidden_states=True)
-                    t_logits = t_out.logits[:,:-1,:].reshape(-1, t_out.logits.size(-1)).to(device_student)
-                    s_out = wrapper(input_ids=ids, attention_mask=mask)
-                    s_logits = s_out.logits[:,:-1,:].reshape(-1, s_out.logits.size(-1))
-                    kl_ce = self.logits_loss(s_logits, t_logits, labels, temperature, alpha)
-                    student_feats = [s_out.hidden_states[i+1][:,:-1,:] for i in range(len(teacher_kept))]
-                    teacher_feats = [t_out.hidden_states[i+1][:,:-1,:].to(device_student) for i in teacher_kept]
+                for batch in train_loader:
+                    ids, mask, labels, loss_mask = prepare_causal_lm_batch(batch, device_student)
+                    with torch.no_grad():
+                        teacher_outputs = self._forward_teacher(batch, device_teacher)
+
+                    teacher_logits = get_output_attr(teacher_outputs, "logits")[..., :-1, :].to(device_student)
+                    student_outputs = self._forward_student(distill_model, ids, mask)
+                    student_logits = get_output_attr(student_outputs, "logits")[..., :-1, :]
+                    kl_ce = self.logits_loss(student_logits, teacher_logits, labels, loss_mask, temperature, alpha)
+
+                    student_hidden_states = self._extract_hidden_states(student_outputs, "Student outputs")
+                    teacher_hidden_states = self._extract_hidden_states(teacher_outputs, "Teacher outputs")
+                    student_feats = [student_hidden_states[idx + 1][..., :-1, :] for idx in range(len(teacher_kept))]
+                    teacher_feats = [teacher_hidden_states[idx + 1][..., :-1, :].to(device_student) for idx in teacher_kept]
                     f_loss = self.feature_loss_selected_layers(
                         student_feats,
                         teacher_feats,
-                        wrapper.projectors,
-                        mask[:, 1:].bool(),
+                        distill_model.projectors,
+                        loss_mask,
                     )
-                    total_val += (kl_ce + gamma*f_loss).item()
-                    count += 1
-            avg_val = total_val / count
-            val_loss_history.append(avg_val)
-            if self.use_wandb:
-                wandb.log({'val_loss': avg_val, 'epoch': epoch})
-            wrapper.train()
 
-        plt.figure()
-        plt.plot(range(1, epochs+1), val_loss_history)
-        plt.xlabel('Epoch')
-        plt.ylabel('Validation Loss')
-        plt.title('Validation Loss over Epochs')
-        plt.grid(True)
-        plt.show()
-        if self.use_wandb:
-            wandb.log({ 'val_loss_plot': plt })
-        return val_loss_history
+                    loss = kl_ce + gamma * f_loss
+                    (loss / grad_accumulation_steps).backward()
+
+                    valid_tokens = int(loss_mask.sum().item())
+                    epoch_loss += loss.item() * valid_tokens
+                    epoch_tokens += valid_tokens
+                    micro_batches += 1
+
+                    if micro_batches == grad_accumulation_steps:
+                        self.optimizer.step()
+                        if self.scheduler is not None:
+                            self.scheduler.step()
+                            sync_scheduler_added_param_group_lrs(self.optimizer, self.scheduler)
+                        zero_grad(self.optimizer)
+                        maybe_log_wandb(
+                            run,
+                            {
+                                "train_loss": loss.item(),
+                                "distill_loss": kl_ce.item(),
+                                "feature_loss": f_loss.item(),
+                                "epoch": epoch,
+                                "step": global_step,
+                            },
+                        )
+                        global_step += 1
+                        micro_batches = 0
+
+                if micro_batches:
+                    self.optimizer.step()
+                    if self.scheduler is not None:
+                        self.scheduler.step()
+                        sync_scheduler_added_param_group_lrs(self.optimizer, self.scheduler)
+                    zero_grad(self.optimizer)
+                    global_step += 1
+
+                if epoch_tokens == 0:
+                    raise ValueError("Training loader did not contain any valid target tokens.")
+                avg_train = epoch_loss / epoch_tokens
+                self.history["train_loss"].append(avg_train)
+
+                avg_val = self._run_validation(
+                    val_loader,
+                    distill_model=distill_model,
+                    teacher_kept=teacher_kept,
+                    device_teacher=device_teacher,
+                    device_student=device_student,
+                    temperature=temperature,
+                    alpha=alpha,
+                    gamma=gamma,
+                )
+                if avg_val is not None:
+                    self.history["val_loss"].append(avg_val)
+                    maybe_log_wandb(run, {"val_loss": avg_val, "epoch": epoch, "step": global_step})
+        finally:
+            maybe_finish_wandb(run)
+
+        if plot and self.history["val_loss"]:
+            self.last_plot = plot_history(
+                self.history["val_loss"],
+                title="Validation Loss Over Epochs",
+                ylabel="Validation Loss",
+                show=show_plot,
+            )
+        else:
+            self.last_plot = None
+
+        return list(self.history["val_loss"])
