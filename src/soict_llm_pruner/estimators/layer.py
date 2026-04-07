@@ -1,25 +1,11 @@
 from __future__ import annotations
 
-from ..core import ESTIMATOR_REGISTRY
-from ._shared import _BaseSimilarityLayerEstimator
-
-
-@ESTIMATOR_REGISTRY.register("layer.similarity")
-class SimilarityLayerEstimator(_BaseSimilarityLayerEstimator):
-    """Adapter-backed layer similarity estimator."""
-
-
-class Llama3SimilarityLayerEstimator(SimilarityLayerEstimator):
-    """Backward-compatible alias for legacy code."""
-
-
-class Qwen2SimilarityLayerEstimator(SimilarityLayerEstimator):
-    """Backward-compatible alias for legacy code."""
-
-
-class MistralSimilarityLayerEstimator(SimilarityLayerEstimator):
-    """Backward-compatible alias for legacy code."""
-
+from .similarity import (
+    Llama3SimilarityLayerEstimator,
+    MistralSimilarityLayerEstimator,
+    Qwen2SimilarityLayerEstimator,
+    SimilarityLayerEstimator,
+)
 
 __all__ = [
     "SimilarityLayerEstimator",

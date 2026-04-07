@@ -22,6 +22,79 @@ def _move_batch_to_device(batch: MutableMapping[str, Any], device: str) -> Dict[
     }
 
 
+def _prepare_causal_lm_inputs(batch: MutableMapping[str, Any], device: str) -> Dict[str, Any]:
+    inputs = _move_batch_to_device(batch, device)
+    if "input_ids" not in inputs:
+        raise ValueError("Batch must contain `input_ids` for causal language modeling.")
+
+    labels = inputs.get("labels")
+    if labels is None:
+        labels = inputs["input_ids"].clone()
+    else:
+        labels = labels.clone()
+
+    attention_mask = inputs.get("attention_mask")
+    if attention_mask is not None:
+        labels = labels.masked_fill(attention_mask == 0, -100)
+
+    inputs["labels"] = labels
+    return inputs
+
+
+def _count_valid_causal_lm_targets(batch: MutableMapping[str, Any]) -> int:
+    labels = batch["labels"]
+    valid_targets = labels[..., 1:].ne(-100)
+    attention_mask = batch.get("attention_mask")
+    if attention_mask is not None:
+        valid_targets = valid_targets & attention_mask[..., 1:].bool()
+    return int(valid_targets.sum().item())
+
+
+def _flatten_hidden_states(hidden_states: torch.Tensor) -> torch.Tensor:
+    return hidden_states.reshape(-1, hidden_states.size(-1)).float()
+
+
+def _flatten_hidden_state_mask(
+    hidden_states: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+) -> torch.Tensor | None:
+    if attention_mask is None:
+        return None
+
+    expected_shape = tuple(hidden_states.shape[:-1])
+    if tuple(attention_mask.shape) != expected_shape:
+        raise ValueError(
+            "attention_mask shape {} must match hidden state shape {} without the hidden dimension.".format(
+                tuple(attention_mask.shape),
+                expected_shape,
+            )
+        )
+    return attention_mask.reshape(-1).bool()
+
+
+def _sum_cosine_distances(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+) -> tuple[float, int]:
+    if x.shape != y.shape:
+        raise ValueError("x and y must have the same shape to compute cosine distance.")
+
+    cosine_similarity = F.cosine_similarity(
+        _flatten_hidden_states(x),
+        _flatten_hidden_states(y),
+        dim=-1,
+    )
+    valid_mask = _flatten_hidden_state_mask(x, attention_mask)
+    if valid_mask is not None:
+        cosine_similarity = cosine_similarity[valid_mask]
+    if cosine_similarity.numel() == 0:
+        return 0.0, 0
+
+    cosine_distance = 1.0 - torch.nan_to_num(cosine_similarity, nan=1.0)
+    return float(cosine_distance.sum().item()), int(cosine_distance.numel())
+
+
 class _ActivationAccumulator:
     """Streaming reducer for activation statistics across all observed tokens."""
 
@@ -770,7 +843,8 @@ class _BaseSimilarityBlockEstimator(_BaseEstimator):
     def estimate(self, dataloader: DataLoader) -> List[float]:
         num_layers = self.model.config.num_hidden_layers
         max_start = num_layers - self.block_size + 1
-        results: List[List[float]] = [[] for _ in range(max_start)]
+        importance_sums = [0.0 for _ in range(max_start)]
+        valid_counts = [0 for _ in range(max_start)]
 
         self._register_hooks()
         try:
@@ -778,7 +852,9 @@ class _BaseSimilarityBlockEstimator(_BaseEstimator):
                 self._attn_inputs.clear()
                 self._mlp_inputs.clear()
                 self._mlp_outputs.clear()
-                self.model(**_move_batch_to_device(batch, self.device))
+                inputs = _move_batch_to_device(batch, self.device)
+                self.model(**inputs)
+                attention_mask = inputs.get("attention_mask")
 
                 for start_idx in range(max_start):
                     end_idx = start_idx + self.block_size - 1
@@ -789,18 +865,24 @@ class _BaseSimilarityBlockEstimator(_BaseEstimator):
                         continue
 
                     next_hidden = residual_input + residual_output
-                    flat_block_input = block_input.view(-1, block_input.size(-1)).float()
-                    flat_next_hidden = next_hidden.view(-1, next_hidden.size(-1)).float()
-                    cosine_similarity = F.cosine_similarity(
-                        flat_block_input,
-                        flat_next_hidden,
-                        dim=1,
-                    ).nan_to_num(1.0).mean().item()
-                    results[start_idx].append(1.0 - cosine_similarity)
+                    distance_sum, valid_count = _sum_cosine_distances(
+                        block_input,
+                        next_hidden,
+                        attention_mask=attention_mask,
+                    )
+                    if valid_count == 0:
+                        continue
+                    importance_sums[start_idx] += distance_sum
+                    valid_counts[start_idx] += valid_count
         finally:
             self._remove_hooks()
 
-        return [sum(values) / len(values) if values else 0.0 for values in results]
+        return [
+            importance_sums[start_idx] / float(valid_counts[start_idx])
+            if valid_counts[start_idx]
+            else 0.0
+            for start_idx in range(max_start)
+        ]
 
 
 class _BaseBlockPerplexityEstimator(_BaseEstimator):
@@ -840,8 +922,8 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
         n_samples: int,
     ) -> float:
         current_model.eval()
-        total_loss = 0.0
-        samples_done = 0
+        total_nll = 0.0
+        total_tokens = 0
         batch_size = getattr(dataloader, "batch_size", None)
         batches_to_process = math.ceil(float(n_samples) / batch_size) if batch_size else n_samples
 
@@ -856,7 +938,11 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
                 if batch_idx >= batches_to_process:
                     break
 
-                inputs = _move_batch_to_device(batch, self.device)
+                inputs = _prepare_causal_lm_inputs(batch, self.device)
+                valid_tokens = _count_valid_causal_lm_targets(inputs)
+                if valid_tokens == 0:
+                    continue
+
                 outputs = current_model(
                     input_ids=inputs["input_ids"],
                     attention_mask=inputs.get("attention_mask"),
@@ -864,12 +950,11 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
                     use_cache=False,
                 )
                 loss = outputs.loss
-                current_batch_size = inputs["input_ids"].size(0)
-                total_loss += loss.item() * current_batch_size
-                samples_done += current_batch_size
-                progress_bar.set_postfix({"loss": loss.item()})
+                total_nll += loss.item() * valid_tokens
+                total_tokens += valid_tokens
+                progress_bar.set_postfix({"loss": loss.item(), "tokens": valid_tokens})
 
-        average_loss = total_loss / samples_done if samples_done > 0 else 0.0
+        average_loss = total_nll / total_tokens if total_tokens > 0 else 0.0
         if average_loss <= 0 or math.isinf(average_loss) or math.isnan(average_loss):
             return float("inf")
         return math.exp(average_loss)

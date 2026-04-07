@@ -24,9 +24,9 @@ pip install -e ".[notebooks]"
 
 - `soict_llm_pruner.adapters`: model adapter contracts and registrations
 - `soict_llm_pruner.core`: registries, identity layers, scoring helpers
-- `soict_llm_pruner.estimators`: activation, magnitude, similarity, and perplexity estimators
-- `soict_llm_pruner.pruners`: classic element/layer/block pruners
-- `soict_llm_pruner.pruners.structured`: integrated LLM-Pruner-style structured pruning
+- `soict_llm_pruner.estimators`: method-first estimators such as `activation.*`, `magnitude.*`, `similarity.*`, `perplexity.*`, `taylor.*`
+- `soict_llm_pruner.pruners`: canonical width/component/depth pruning APIs plus config types
+- `soict_llm_pruner.pruners.structured`: deprecated compatibility facade for legacy structured imports
 - `soict_llm_pruner.distillation`: recovery and distillation helpers
 - `soict_llm_pruner.evaluation`: latency and throughput measurement
 
@@ -47,8 +47,8 @@ from soict_llm_pruner.pruners import create_pruner
 
 model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
 
-estimator = create_estimator("element.weight_magnitude", model, device="cpu")
-pruner = create_pruner("element", model, device="cpu")
+estimator = create_estimator("magnitude.element", model, device="cpu")
+pruner = create_pruner("width", model, device="cpu")
 
 head_scores = estimator.estimate_attention_heads(agg="l1")
 pruned_model = pruner.prune_attention_query(
@@ -60,17 +60,17 @@ pruned_model = pruner.prune_attention_query(
 Structured pruning flow:
 
 ```python
-from soict_llm_pruner.pruners.structured import (
-    BlockWiseConfig,
-    ImportanceConfig,
-    StructuredBlockPruner,
+from soict_llm_pruner.pruners import (
+    EstimatorSpec,
+    WidthGroupConfig,
+    WidthGroupPruner,
 )
 
-pruner = StructuredBlockPruner(
+pruner = WidthGroupPruner(
     model,
-    BlockWiseConfig(
+    WidthGroupConfig(
         pruning_ratio=0.2,
-        importance=ImportanceConfig(kind="l1"),
+        estimator=EstimatorSpec("magnitude.group", {"norm": "l1"}),
     ),
     device="cpu",
 )
@@ -81,7 +81,7 @@ plan = pruner.select(scores)
 result = pruner.apply(plan)
 
 pruner.save_pruned("artifacts/block", result)
-reloaded = StructuredBlockPruner.load_pruned("artifacts/block", device="cpu")
+reloaded = WidthGroupPruner.load_pruned("artifacts/block", device="cpu")
 ```
 
 ## Supported Models
@@ -89,22 +89,21 @@ reloaded = StructuredBlockPruner.load_pruned("artifacts/block", device="cpu")
 - Llama-like decoder-only architectures via adapters
 - Structured v1 rules for `Llama3`, `Qwen2`, and `Mistral`
 
-## Structured Pruning API
+## Canonical Pruning API
 
 ```python
-from soict_llm_pruner.pruners.structured import (
-    BlockWiseConfig,
-    ChannelWiseConfig,
-    DiscoveryContext,
-    ImportanceConfig,
-    LayerWiseConfig,
-    PruningPlan,
+from soict_llm_pruner.pruners import (
+    DepthLayerConfig,
+    EstimatorSpec,
     PruningResult,
-    StructuredBlockPruner,
-    StructuredChannelPruner,
-    StructuredLayerPruner,
+    WidthChannelConfig,
+    WidthChannelPruner,
+    WidthGroupConfig,
+    WidthGroupPruner,
 )
 ```
+
+Legacy `soict_llm_pruner.pruners.structured` imports still work for one compatibility release and emit `DeprecationWarning`.
 
 Structured block-wise attention groups are GQA-aware:
 

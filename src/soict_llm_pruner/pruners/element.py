@@ -12,6 +12,7 @@ from ..core import (
     PRUNING_STRATEGY_REGISTRY,
     calculate_embedding_channels_global_score,
 )
+from ._compat import warn_pruner_alias
 from ._shared import _BasePruner
 
 
@@ -22,10 +23,10 @@ class BaseElementPruningStrategy:
         raise NotImplementedError
 
 
-@PRUNER_REGISTRY.register("element")
-class ElementPruner(_BasePruner):
+@PRUNER_REGISTRY.register("width", aliases=("element",))
+class WidthPruner(_BasePruner):
     """
-    Generic element-level pruner backed by model adapters and pruning strategies.
+    Generic width-oriented pruner backed by model adapters and pruning strategies.
     """
 
     def __init__(self, original_model, device: str = "cuda", model_adapter=None):
@@ -641,11 +642,24 @@ class EmbeddingChannelPruningStrategy(BaseElementPruningStrategy):
 
 
 def available_element_pruning_strategies() -> tuple[str, ...]:
+    warnings.warn(
+        "available_element_pruning_strategies() is deprecated; use WidthPruner.available_strategies().",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return tuple(
         name
         for name in PRUNING_STRATEGY_REGISTRY.names()
         if name.startswith("element.")
     )
+
+
+class ElementPruner(WidthPruner):
+    """Backward-compatible alias for legacy code."""
+
+    def __init__(self, *args, **kwargs):
+        warn_pruner_alias("ElementPruner", "WidthPruner", stacklevel=3)
+        super().__init__(*args, **kwargs)
 
 
 class Llama3ElementPruner(ElementPruner):
@@ -662,6 +676,7 @@ class MistralElementPruner(ElementPruner):
 
 __all__ = [
     "BaseElementPruningStrategy",
+    "WidthPruner",
     "ElementPruner",
     "Llama3ElementPruner",
     "Qwen2ElementPruner",

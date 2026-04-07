@@ -1,42 +1,17 @@
 from __future__ import annotations
 
-from ..core import ESTIMATOR_REGISTRY
-from ._shared import _BaseBlockPerplexityEstimator, _BaseSimilarityBlockEstimator
-
-
-@ESTIMATOR_REGISTRY.register("block.similarity")
-class SimilarityBlockEstimator(_BaseSimilarityBlockEstimator):
-    """Adapter-backed block similarity estimator."""
-
-
-@ESTIMATOR_REGISTRY.register("block.perplexity")
-class BlockPerplexityEstimator(_BaseBlockPerplexityEstimator):
-    """Adapter-backed block perplexity estimator."""
-
-
-class Llama3SimilarityBlockEstimator(SimilarityBlockEstimator):
-    """Backward-compatible alias for legacy code."""
-
-
-class Qwen2SimilarityBlockEstimator(SimilarityBlockEstimator):
-    """Backward-compatible alias for legacy code."""
-
-
-class MistralSimilarityBlockEstimator(SimilarityBlockEstimator):
-    """Backward-compatible alias for legacy code."""
-
-
-class Llama3BlockPerplexityEstimator(BlockPerplexityEstimator):
-    """Backward-compatible alias for legacy code."""
-
-
-class Qwen2BlockPerplexityEstimator(BlockPerplexityEstimator):
-    """Backward-compatible alias for legacy code."""
-
-
-class MistralBlockPerplexityEstimator(BlockPerplexityEstimator):
-    """Backward-compatible alias for legacy code."""
-
+from .perplexity import (
+    BlockPerplexityEstimator,
+    Llama3BlockPerplexityEstimator,
+    MistralBlockPerplexityEstimator,
+    Qwen2BlockPerplexityEstimator,
+)
+from .similarity import (
+    Llama3SimilarityBlockEstimator,
+    MistralSimilarityBlockEstimator,
+    Qwen2SimilarityBlockEstimator,
+    SimilarityBlockEstimator,
+)
 
 __all__ = [
     "SimilarityBlockEstimator",

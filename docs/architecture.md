@@ -43,13 +43,17 @@ Classic estimators and pruners register themselves here so external code can use
 
 ### Estimators
 
-`soict_llm_pruner.estimators` contains the adapter-backed scoring logic:
+`soict_llm_pruner.estimators` now uses a method-first taxonomy:
 
-- `element.activation`
-- `element.weight_magnitude`
-- `layer.similarity`
-- `block.similarity`
-- `block.perplexity`
+- `activation.element`
+- `magnitude.element`
+- `similarity.layer`
+- `similarity.block`
+- `perplexity.block`
+- `random.group`
+- `magnitude.group`
+- `magnitude.channel`
+- `taylor.group`
 
 The activation estimator computes importance from calibration activations. For grouped attention it measures the grouped `o_proj` input directly, so one attention-group score corresponds to one KV group plus all attached query heads.
 
@@ -60,25 +64,27 @@ The weight-magnitude estimator is data free. Its group scores are structured sum
 - MLP neuron score: `gate_proj` row + `up_proj` row + `down_proj` column
 - embedding/channel score: hidden-stream-aligned slices summed across embeddings, norms, attention, MLP, and LM head
 
-### Classic Pruners
+### Pruners
 
-`soict_llm_pruner.pruners` contains the original adapter-backed pruning flows:
+`soict_llm_pruner.pruners` now uses an effect-first taxonomy:
 
-- `ElementPruner`
-- `LayerPruner`
-- `BlockPruner`
+- `width`
+- `width.group`
+- `width.channel`
+- `component`
+- `depth.block`
+- `depth.layer`
 
-Element pruning uses explicit strategy classes registered under `PRUNING_STRATEGY_REGISTRY`.
+Canonical public classes:
 
-### Structured Pruners
+- `WidthPruner`
+- `WidthGroupPruner`
+- `WidthChannelPruner`
+- `ComponentPruner`
+- `DepthBlockPruner`
+- `DepthLayerPruner`
 
-`soict_llm_pruner.pruners.structured` is the integrated LLM-Pruner-style subsystem. It is no longer a separate package.
-
-Public facades:
-
-- `StructuredBlockPruner`
-- `StructuredChannelPruner`
-- `StructuredLayerPruner`
+Compatibility aliases such as `ElementPruner` and `StructuredBlockPruner` remain for one release and emit `DeprecationWarning`.
 
 Shared flow:
 
@@ -92,7 +98,7 @@ Structured block-wise discovery creates only two group families:
 - attention groups anchored on `q_proj`
 - MLP groups anchored on `gate_proj`
 
-Structured persistence is manifest-based. `save_pruned()` stores weights plus `llm_pruner_manifest.json`, and `load_pruned()` reconstructs the dense base architecture before replaying the structural rewrite.
+Structured persistence is manifest-based. `save_pruned()` stores weights plus `llm_pruner_manifest.json`, and `load_pruned()` reconstructs the dense base architecture before replaying the structural rewrite. Manifest v2 records canonical pruner names, adapter metadata, and config payloads.
 
 ### Distillation And Recovery
 

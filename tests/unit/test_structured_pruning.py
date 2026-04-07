@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
@@ -10,6 +11,7 @@ from tests.fixtures.synthetic_models import SyntheticCausalLM, SyntheticConfig
 from torch.utils.data import DataLoader
 
 from soict_llm_pruner.estimators import ActivationElementEstimator
+from soict_llm_pruner.estimators._shared import _BaseBlockPerplexityEstimator
 from soict_llm_pruner.pruners.structured import (
     BlockWiseConfig,
     ChannelWiseConfig,
@@ -259,6 +261,49 @@ def test_taylor_importance_matches_manual_variants():
         torch.testing.assert_close(torch.tensor(scores["linear.row0"]), torch.tensor(expected))
 
 
+def test_block_perplexity_uses_token_weighted_average_and_masks_padding():
+    class TokenLossToyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.loss_by_first_token = {1: 1.0, 2: 4.0}
+
+        def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
+            expected_labels = input_ids.clone()
+            if attention_mask is not None:
+                expected_labels = expected_labels.masked_fill(attention_mask == 0, -100)
+            assert torch.equal(labels, expected_labels)
+            return SimpleNamespace(
+                loss=torch.tensor(
+                    self.loss_by_first_token[int(input_ids[0, 0].item())],
+                    dtype=torch.float32,
+                    device=input_ids.device,
+                )
+            )
+
+    dataloader = DataLoader(
+        [
+            {
+                "input_ids": torch.tensor([1, 10, 11], dtype=torch.long),
+                "attention_mask": torch.tensor([1, 1, 0], dtype=torch.long),
+                "labels": torch.tensor([1, 10, 11], dtype=torch.long),
+            },
+            {
+                "input_ids": torch.tensor([2, 20, 21, 22, 23], dtype=torch.long),
+                "attention_mask": torch.tensor([1, 1, 1, 1, 1], dtype=torch.long),
+                "labels": torch.tensor([2, 20, 21, 22, 23], dtype=torch.long),
+            },
+        ],
+        batch_size=1,
+    )
+
+    estimator = object.__new__(_BaseBlockPerplexityEstimator)
+    estimator.device = "cpu"
+
+    perplexity = estimator._calculate_perplexity(TokenLossToyModel(), dataloader, n_samples=2)
+    expected_loss = (1.0 * 1 + 4.0 * 4) / 5.0
+    torch.testing.assert_close(torch.tensor(perplexity), torch.exp(torch.tensor(expected_loss)))
+
+
 def test_blockwise_execution_prunes_mha_attention_groups():
     model = make_model(num_hidden_layers=1, num_attention_heads=4, num_key_value_heads=4, head_dim=2, hidden_size=8)
     attention = model.model.layers[0].self_attn
@@ -483,6 +528,12 @@ def test_blockwise_persistence_roundtrip_recreates_logits_and_manifest(tmp_path:
     manifest = json.loads(
         (save_dir / "llm_pruner_manifest.json").read_text(encoding="utf-8")
     )
+    assert manifest["version"] == 2
+    assert manifest["canonical_pruner"] == "width.group"
+    assert manifest["pruning_mode"] == "block"
+    assert manifest["adapter_name"] == "decoder_layout"
+    assert manifest["config_class"].endswith(":WidthGroupConfig")
+    assert manifest["config_payload"]["estimator"]["name"] == "random.group"
     assert manifest["plan"]["metadata"]["selected_attention_groups_by_layer"] == {"0": [1, 3]}
 
 
@@ -509,6 +560,11 @@ def test_channelwise_persistence_roundtrip_recreates_logits_and_indices(tmp_path
     manifest = json.loads(
         (save_dir / "llm_pruner_manifest.json").read_text(encoding="utf-8")
     )
+    assert manifest["version"] == 2
+    assert manifest["canonical_pruner"] == "width.channel"
+    assert manifest["pruning_mode"] == "channel"
+    assert manifest["config_class"].endswith(":WidthChannelConfig")
+    assert manifest["config_payload"]["estimator"]["name"] == "random.group"
     assert manifest["plan"]["metadata"]["selected_residual_indices"] == [1, 3, 5, 7]
 
 
@@ -524,6 +580,14 @@ def test_layerwise_persistence_roundtrip_recreates_logits(tmp_path: Path):
     loaded = StructuredLayerPruner.load_pruned(save_dir, device="cpu")
     actual_logits = loaded.model(**sample)["logits"]
     torch.testing.assert_close(actual_logits, expected_logits)
+
+    manifest = json.loads(
+        (save_dir / "llm_pruner_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["version"] == 2
+    assert manifest["canonical_pruner"] == "depth.layer"
+    assert manifest["pruning_mode"] == "layer"
+    assert manifest["config_class"].endswith(":DepthLayerConfig")
 
 
 def test_unified_package_does_not_import_legacy_namespaces():

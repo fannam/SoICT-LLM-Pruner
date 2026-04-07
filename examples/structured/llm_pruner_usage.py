@@ -4,20 +4,20 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM
 
-from soict_llm_pruner.pruners.structured import (
-    BlockWiseConfig,
-    ImportanceConfig,
-    StructuredBlockPruner,
+from soict_llm_pruner.pruners import (
+    EstimatorSpec,
+    WidthGroupConfig,
+    WidthGroupPruner,
 )
 
 
 def main() -> None:
     model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
-    pruner = StructuredBlockPruner(
+    pruner = WidthGroupPruner(
         model,
-        BlockWiseConfig(
+        WidthGroupConfig(
             pruning_ratio=0.2,
-            importance=ImportanceConfig(kind="l1"),
+            estimator=EstimatorSpec("magnitude.group", {"norm": "l1"}),
         ),
         device="cpu",
     )

@@ -8,8 +8,8 @@ from soict_llm_pruner.pruners import create_pruner
 
 def main() -> None:
     model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
-    estimator = create_estimator("element.weight_magnitude", model, device="cpu")
-    pruner = create_pruner("element", model, device="cpu")
+    estimator = create_estimator("magnitude.element", model, device="cpu")
+    pruner = create_pruner("width", model, device="cpu")
 
     head_scores = estimator.estimate_attention_heads(agg="l1")
     pruned_model = pruner.prune_attention_query(

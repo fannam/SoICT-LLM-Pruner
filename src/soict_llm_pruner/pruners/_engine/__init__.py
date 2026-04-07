@@ -1,26 +1,27 @@
 from __future__ import annotations
 
-from .config import BlockWiseConfig, ChannelWiseConfig, EstimatorSpec, ImportanceConfig, LayerWiseConfig
+from .config import DepthLayerConfig, EstimatorSpec, ImportanceConfig, WidthChannelConfig, WidthGroupConfig
 from .discovery import discover_blockwise, discover_channelwise
-from .facade import StructuredBlockPruner, StructuredChannelPruner, StructuredLayerPruner
-from .importance import estimate_importance
+from .estimation import estimate_importance, estimate_scores
+from .facade import DepthLayerPruner, WidthChannelPruner, WidthGroupPruner
 from .types import DiscoveryContext, PruningGroup, PruningPlan, PruningResult, SliceSpec
 
 __all__ = [
-    "BlockWiseConfig",
-    "ChannelWiseConfig",
+    "DepthLayerConfig",
+    "DepthLayerPruner",
     "DiscoveryContext",
     "EstimatorSpec",
     "ImportanceConfig",
-    "LayerWiseConfig",
     "PruningGroup",
     "PruningPlan",
     "PruningResult",
     "SliceSpec",
-    "StructuredBlockPruner",
-    "StructuredChannelPruner",
-    "StructuredLayerPruner",
+    "WidthChannelConfig",
+    "WidthChannelPruner",
+    "WidthGroupConfig",
+    "WidthGroupPruner",
     "discover_blockwise",
     "discover_channelwise",
     "estimate_importance",
+    "estimate_scores",
 ]
