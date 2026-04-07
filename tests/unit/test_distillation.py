@@ -10,7 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from soict_llm_pruner.distillation import HybridDistiller, LogitsDistiller
+from soict_llm_pruner.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
+from soict_llm_pruner.distillation.optimal_transport import masked_ot_loss, sinkhorn_divergence
 
 
 @dataclass
@@ -139,8 +140,18 @@ class DummyTokenizer:
 def make_batch(offset: int, *, vocab_size: int, padded: bool = False) -> dict[str, torch.Tensor]:
     input_ids = torch.tensor(
         [
-            [(offset + 1) % vocab_size, (offset + 2) % vocab_size, (offset + 3) % vocab_size, (offset + 4) % vocab_size],
-            [(offset + 2) % vocab_size, (offset + 3) % vocab_size, (offset + 4) % vocab_size, (offset + 5) % vocab_size],
+            [
+                (offset + 1) % vocab_size,
+                (offset + 2) % vocab_size,
+                (offset + 3) % vocab_size,
+                (offset + 4) % vocab_size,
+            ],
+            [
+                (offset + 2) % vocab_size,
+                (offset + 3) % vocab_size,
+                (offset + 4) % vocab_size,
+                (offset + 5) % vocab_size,
+            ],
         ],
         dtype=torch.long,
     )
@@ -254,6 +265,222 @@ def test_hybrid_distiller_adds_projectors_to_optimizer_and_flushes_remainder():
     assert step_state["calls"] == 2
     assert scheduler.step_calls == 2
     assert len(val_history) == 1
+
+
+def test_sinkhorn_divergence_is_near_zero_for_identical_features():
+    features = torch.tensor(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    loss = sinkhorn_divergence(
+        features,
+        features.clone(),
+        config=OTConfig(
+            epsilon=0.1,
+            sinkhorn_iters=50,
+            position_weight=0.05,
+            window_radius=3,
+        ),
+    )
+
+    assert torch.isfinite(loss)
+    assert abs(loss.item()) < 1e-4
+
+
+def test_sinkhorn_divergence_penalizes_permuted_tokens_with_position_cost():
+    features = torch.eye(3, dtype=torch.float32)
+    permuted = features.flip(0)
+
+    loss_without_position = sinkhorn_divergence(
+        features,
+        permuted,
+        config=OTConfig(
+            epsilon=0.1,
+            sinkhorn_iters=50,
+            position_weight=0.0,
+            window_radius=3,
+        ),
+    )
+    loss_with_position = sinkhorn_divergence(
+        features,
+        permuted,
+        config=OTConfig(
+            epsilon=0.1,
+            sinkhorn_iters=50,
+            position_weight=0.5,
+            window_radius=3,
+        ),
+    )
+
+    assert loss_with_position > loss_without_position + 1e-3
+
+
+def test_sinkhorn_divergence_respects_locality_band():
+    features = torch.eye(4, dtype=torch.float32)
+    permuted = features.flip(0)
+
+    free_loss = sinkhorn_divergence(
+        features,
+        permuted,
+        config=OTConfig(
+            epsilon=0.1,
+            sinkhorn_iters=50,
+            position_weight=0.0,
+            window_radius=4,
+        ),
+    )
+    local_loss = sinkhorn_divergence(
+        features,
+        permuted,
+        config=OTConfig(
+            epsilon=0.1,
+            sinkhorn_iters=50,
+            position_weight=0.0,
+            window_radius=0,
+        ),
+    )
+
+    assert local_loss > free_loss + 1e-3
+
+
+def test_masked_ot_loss_ignores_masked_positions():
+    projectors = nn.ModuleList([nn.Identity()])
+    student = [
+        torch.tensor(
+            [
+                [[1.0, 0.0], [0.0, 1.0], [4.0, 4.0]],
+                [[0.5, 0.5], [3.0, 3.0], [7.0, 7.0]],
+            ],
+            dtype=torch.float32,
+        )
+    ]
+    teacher_a = [student[0].clone()]
+    teacher_b = [student[0].clone()]
+    teacher_b[0][:, -1, :] = torch.tensor([[100.0, -100.0], [-50.0, 50.0]])
+    teacher_b[0][1, 1, :] = torch.tensor([25.0, -25.0])
+    loss_mask = torch.tensor(
+        [
+            [True, True, False],
+            [True, False, False],
+        ]
+    )
+    ot_config = OTConfig(
+        epsilon=0.1,
+        sinkhorn_iters=30,
+        position_weight=0.2,
+        window_radius=2,
+        max_tokens_per_sequence=8,
+    )
+
+    loss_a = masked_ot_loss(student, teacher_a, projectors, loss_mask, ot_config)
+    loss_b = masked_ot_loss(student, teacher_b, projectors, loss_mask, ot_config)
+
+    assert torch.isclose(loss_a, loss_b, atol=1e-5)
+
+
+def test_masked_ot_loss_handles_single_token_sequences():
+    projectors = nn.ModuleList([nn.Identity()])
+    student = [torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)]
+    teacher = [torch.tensor([[[1.0, 0.0], [1.0, 0.0]]], dtype=torch.float32)]
+    loss_mask = torch.tensor([[False, True]])
+
+    loss = masked_ot_loss(student, teacher, projectors, loss_mask, OTConfig(window_radius=0))
+
+    assert torch.isfinite(loss)
+
+
+def test_masked_ot_loss_backpropagates_through_student_and_projector():
+    projector = nn.ModuleList([nn.Linear(3, 3, bias=False)])
+    student = [torch.randn(1, 4, 3, requires_grad=True)]
+    teacher = [torch.randn(1, 4, 3)]
+    loss_mask = torch.tensor([[True, True, True, True]])
+
+    loss = masked_ot_loss(
+        student,
+        teacher,
+        projector,
+        loss_mask,
+        OTConfig(
+            epsilon=0.1,
+            sinkhorn_iters=20,
+            position_weight=0.1,
+            window_radius=4,
+        ),
+    )
+    loss.backward()
+
+    assert student[0].grad is not None
+    assert torch.isfinite(student[0].grad).all()
+    for parameter in projector.parameters():
+        assert parameter.grad is not None
+        assert torch.isfinite(parameter.grad).all()
+
+
+def test_hybrid_ot_distiller_tracks_ot_history_and_logs_ot_loss(monkeypatch):
+    import soict_llm_pruner.distillation.hybrid as hybrid_module
+
+    torch.manual_seed(0)
+    teacher = TinyCausalLM(TinyConfig(hidden_size=8, num_hidden_layers=3, vocab_size=29))
+    student = TinyCausalLM(TinyConfig(hidden_size=4, num_hidden_layers=2, vocab_size=29))
+    optimizer = torch.optim.SGD(student.parameters(), lr=0.05)
+    scheduler = CountingScheduler(optimizer)
+    step_state = attach_step_counter(optimizer)
+    train_loader = [make_batch(idx, vocab_size=29, padded=(idx == 1)) for idx in range(3)]
+    val_loader = [make_batch(7, vocab_size=29, padded=True)]
+    logged_payloads = []
+
+    monkeypatch.setattr(hybrid_module, "maybe_init_wandb", lambda **kwargs: object())
+    monkeypatch.setattr(hybrid_module, "maybe_log_wandb", lambda run, payload: logged_payloads.append(payload))
+    monkeypatch.setattr(hybrid_module, "maybe_finish_wandb", lambda run: None)
+
+    distiller = HybridOTDistiller(
+        teacher_model=teacher,
+        student_model=student,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        use_wandb=True,
+        ot_config=OTConfig(
+            epsilon=0.1,
+            sinkhorn_iters=20,
+            position_weight=0.1,
+            window_radius=2,
+            max_tokens_per_sequence=2,
+        ),
+    )
+
+    val_history = distiller.distill(
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device_teacher="cpu",
+        device_student="cpu",
+        epochs=1,
+        grad_accumulation_steps=2,
+        block_layers_to_prune=[1],
+    )
+
+    projector_ids = {id(parameter) for parameter in distiller.distill_model.projectors.parameters()}
+    optimizer_ids = {
+        id(parameter)
+        for group in optimizer.param_groups
+        for parameter in group["params"]
+    }
+
+    assert distiller.teacher_kept_layers == [0, 2]
+    assert len(optimizer.param_groups) == 2
+    assert projector_ids <= optimizer_ids
+    assert step_state["calls"] == 2
+    assert scheduler.step_calls == 2
+    assert len(val_history) == 1
+    assert len(distiller.history["train_ot_loss"]) == 1
+    assert len(distiller.history["val_ot_loss"]) == 1
+    assert torch.isfinite(torch.tensor(distiller.history["train_ot_loss"])).all()
+    assert torch.isfinite(torch.tensor(distiller.history["val_ot_loss"])).all()
+    assert any("ot_loss" in payload for payload in logged_payloads if "train_loss" in payload)
 
 
 def test_teacher_correction_save_model_persists_tokenizer(tmp_path):

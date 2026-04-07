@@ -41,7 +41,7 @@ class HybridDistiller:
         self.wandb_key = wandb_key
         self.project_name = project_name
         self.run_name = run_name
-        self.history = {"train_loss": [], "val_loss": []}
+        self.history = self._initialize_history()
         self.distill_model = None
         self.teacher_kept_layers = None
         self.last_plot = None
@@ -58,6 +58,16 @@ class HybridDistiller:
 
     def feature_loss_selected_layers(self, student_feats, teacher_feats, projectors, mask):
         return masked_feature_loss(student_feats, teacher_feats, projectors, mask)
+
+    def _tracked_metric_keys(self) -> tuple[str, ...]:
+        return ()
+
+    def _initialize_history(self) -> dict[str, list[float]]:
+        history = {"train_loss": [], "val_loss": []}
+        for metric_key in self._tracked_metric_keys():
+            history["train_{}".format(metric_key)] = []
+            history["val_{}".format(metric_key)] = []
+        return history
 
     def _resolve_teacher_kept_layers(self, block_layers_to_prune):
         total_layers = self.teacher_model.config.num_hidden_layers
@@ -140,6 +150,107 @@ class HybridDistiller:
             raise ValueError(f"{model_name} must return `hidden_states` when `output_hidden_states=True`.")
         return hidden_states
 
+    def _extract_aligned_features(
+        self,
+        student_outputs,
+        teacher_outputs,
+        teacher_kept,
+        device_student,
+    ):
+        student_hidden_states = self._extract_hidden_states(student_outputs, "Student outputs")
+        teacher_hidden_states = self._extract_hidden_states(teacher_outputs, "Teacher outputs")
+        student_feats = [student_hidden_states[idx + 1][..., :-1, :] for idx in range(len(teacher_kept))]
+        teacher_feats = [teacher_hidden_states[idx + 1][..., :-1, :].to(device_student) for idx in teacher_kept]
+        return student_feats, teacher_feats
+
+    def _extract_aligned_logits(self, student_outputs, teacher_outputs, device_student):
+        teacher_logits = get_output_attr(teacher_outputs, "logits")[..., :-1, :].to(device_student)
+        student_logits = get_output_attr(student_outputs, "logits")[..., :-1, :]
+        return student_logits, teacher_logits
+
+    def _compute_base_losses(
+        self,
+        *,
+        student_outputs,
+        teacher_outputs,
+        labels,
+        loss_mask,
+        teacher_kept,
+        projectors,
+        device_student,
+        temperature: float,
+        alpha: float,
+    ):
+        student_logits, teacher_logits = self._extract_aligned_logits(
+            student_outputs,
+            teacher_outputs,
+            device_student,
+        )
+        kl_ce = self.logits_loss(student_logits, teacher_logits, labels, loss_mask, temperature, alpha)
+        student_feats, teacher_feats = self._extract_aligned_features(
+            student_outputs,
+            teacher_outputs,
+            teacher_kept,
+            device_student,
+        )
+        f_loss = self.feature_loss_selected_layers(
+            student_feats,
+            teacher_feats,
+            projectors,
+            loss_mask,
+        )
+        return kl_ce, f_loss, student_feats, teacher_feats
+
+    def _compute_loss_terms(
+        self,
+        *,
+        student_outputs,
+        teacher_outputs,
+        labels,
+        loss_mask,
+        teacher_kept,
+        projectors,
+        device_student,
+        temperature: float,
+        alpha: float,
+        gamma: float,
+    ) -> dict[str, torch.Tensor]:
+        kl_ce, f_loss, _, _ = self._compute_base_losses(
+            student_outputs=student_outputs,
+            teacher_outputs=teacher_outputs,
+            labels=labels,
+            loss_mask=loss_mask,
+            teacher_kept=teacher_kept,
+            projectors=projectors,
+            device_student=device_student,
+            temperature=temperature,
+            alpha=alpha,
+        )
+        return {
+            "total_loss": kl_ce + gamma * f_loss,
+            "distill_loss": kl_ce,
+            "feature_loss": f_loss,
+        }
+
+    def _step_log_payload(
+        self,
+        loss_terms: dict[str, torch.Tensor],
+        *,
+        epoch: int,
+        global_step: int,
+    ) -> dict[str, float]:
+        payload = {
+            "train_loss": float(loss_terms["total_loss"].item()),
+            "distill_loss": float(loss_terms["distill_loss"].item()),
+            "feature_loss": float(loss_terms["feature_loss"].item()),
+            "epoch": epoch,
+            "step": global_step,
+        }
+        for metric_key in self._tracked_metric_keys():
+            if metric_key in loss_terms:
+                payload[metric_key] = float(loss_terms[metric_key].item())
+        return payload
+
     def _run_validation(
         self,
         val_loader,
@@ -151,41 +262,48 @@ class HybridDistiller:
         temperature: float,
         alpha: float,
         gamma: float,
-    ) -> float | None:
+    ) -> dict[str, float] | None:
         if val_loader is None:
             return None
 
         distill_model.eval()
         total_loss = 0.0
         total_tokens = 0
+        metric_sums = {
+            metric_key: 0.0
+            for metric_key in self._tracked_metric_keys()
+        }
         with torch.no_grad():
             for batch in val_loader:
                 ids, mask, labels, loss_mask = prepare_causal_lm_batch(batch, device_student)
                 teacher_outputs = self._forward_teacher(batch, device_teacher)
-                teacher_logits = get_output_attr(teacher_outputs, "logits")[..., :-1, :].to(device_student)
                 student_outputs = self._forward_student(distill_model, ids, mask)
-                student_logits = get_output_attr(student_outputs, "logits")[..., :-1, :]
-
-                kl_ce = self.logits_loss(student_logits, teacher_logits, labels, loss_mask, temperature, alpha)
-                student_hidden_states = self._extract_hidden_states(student_outputs, "Student outputs")
-                teacher_hidden_states = self._extract_hidden_states(teacher_outputs, "Teacher outputs")
-                student_feats = [student_hidden_states[idx + 1][..., :-1, :] for idx in range(len(teacher_kept))]
-                teacher_feats = [teacher_hidden_states[idx + 1][..., :-1, :].to(device_student) for idx in teacher_kept]
-                f_loss = self.feature_loss_selected_layers(
-                    student_feats,
-                    teacher_feats,
-                    distill_model.projectors,
-                    loss_mask,
+                loss_terms = self._compute_loss_terms(
+                    student_outputs=student_outputs,
+                    teacher_outputs=teacher_outputs,
+                    labels=labels,
+                    loss_mask=loss_mask,
+                    teacher_kept=teacher_kept,
+                    projectors=distill_model.projectors,
+                    device_student=device_student,
+                    temperature=temperature,
+                    alpha=alpha,
+                    gamma=gamma,
                 )
 
                 valid_tokens = int(loss_mask.sum().item())
-                total_loss += (kl_ce.item() + gamma * f_loss.item()) * valid_tokens
+                total_loss += float(loss_terms["total_loss"].item()) * valid_tokens
                 total_tokens += valid_tokens
+                for metric_key in self._tracked_metric_keys():
+                    metric_sums[metric_key] += float(loss_terms[metric_key].item()) * valid_tokens
         distill_model.train()
 
         if total_tokens == 0:
             raise ValueError("Validation loader did not contain any valid target tokens.")
-        return total_loss / total_tokens
+        metrics = {"val_loss": total_loss / total_tokens}
+        for metric_key in self._tracked_metric_keys():
+            metrics["val_{}".format(metric_key)] = metric_sums[metric_key] / total_tokens
+        return metrics
 
     def distill(
         self,
@@ -225,7 +343,7 @@ class HybridDistiller:
             wandb_key=self.wandb_key,
         )
 
-        self.history = {"train_loss": [], "val_loss": []}
+        self.history = self._initialize_history()
         global_step = 0
         zero_grad(self.optimizer)
 
@@ -234,35 +352,38 @@ class HybridDistiller:
                 epoch_loss = 0.0
                 epoch_tokens = 0
                 micro_batches = 0
+                metric_sums = {
+                    metric_key: 0.0
+                    for metric_key in self._tracked_metric_keys()
+                }
 
                 for batch in train_loader:
                     ids, mask, labels, loss_mask = prepare_causal_lm_batch(batch, device_student)
                     with torch.no_grad():
                         teacher_outputs = self._forward_teacher(batch, device_teacher)
 
-                    teacher_logits = get_output_attr(teacher_outputs, "logits")[..., :-1, :].to(device_student)
                     student_outputs = self._forward_student(distill_model, ids, mask)
-                    student_logits = get_output_attr(student_outputs, "logits")[..., :-1, :]
-                    kl_ce = self.logits_loss(student_logits, teacher_logits, labels, loss_mask, temperature, alpha)
-
-                    student_hidden_states = self._extract_hidden_states(student_outputs, "Student outputs")
-                    teacher_hidden_states = self._extract_hidden_states(teacher_outputs, "Teacher outputs")
-                    student_feats = [student_hidden_states[idx + 1][..., :-1, :] for idx in range(len(teacher_kept))]
-                    teacher_feats = [teacher_hidden_states[idx + 1][..., :-1, :].to(device_student) for idx in teacher_kept]
-                    f_loss = self.feature_loss_selected_layers(
-                        student_feats,
-                        teacher_feats,
-                        distill_model.projectors,
-                        loss_mask,
+                    loss_terms = self._compute_loss_terms(
+                        student_outputs=student_outputs,
+                        teacher_outputs=teacher_outputs,
+                        labels=labels,
+                        loss_mask=loss_mask,
+                        teacher_kept=teacher_kept,
+                        projectors=distill_model.projectors,
+                        device_student=device_student,
+                        temperature=temperature,
+                        alpha=alpha,
+                        gamma=gamma,
                     )
-
-                    loss = kl_ce + gamma * f_loss
+                    loss = loss_terms["total_loss"]
                     (loss / grad_accumulation_steps).backward()
 
                     valid_tokens = int(loss_mask.sum().item())
                     epoch_loss += loss.item() * valid_tokens
                     epoch_tokens += valid_tokens
                     micro_batches += 1
+                    for metric_key in self._tracked_metric_keys():
+                        metric_sums[metric_key] += float(loss_terms[metric_key].item()) * valid_tokens
 
                     if micro_batches == grad_accumulation_steps:
                         self.optimizer.step()
@@ -270,16 +391,7 @@ class HybridDistiller:
                             self.scheduler.step()
                             sync_scheduler_added_param_group_lrs(self.optimizer, self.scheduler)
                         zero_grad(self.optimizer)
-                        maybe_log_wandb(
-                            run,
-                            {
-                                "train_loss": loss.item(),
-                                "distill_loss": kl_ce.item(),
-                                "feature_loss": f_loss.item(),
-                                "epoch": epoch,
-                                "step": global_step,
-                            },
-                        )
+                        maybe_log_wandb(run, self._step_log_payload(loss_terms, epoch=epoch, global_step=global_step))
                         global_step += 1
                         micro_batches = 0
 
@@ -295,8 +407,10 @@ class HybridDistiller:
                     raise ValueError("Training loader did not contain any valid target tokens.")
                 avg_train = epoch_loss / epoch_tokens
                 self.history["train_loss"].append(avg_train)
+                for metric_key in self._tracked_metric_keys():
+                    self.history["train_{}".format(metric_key)].append(metric_sums[metric_key] / epoch_tokens)
 
-                avg_val = self._run_validation(
+                val_metrics = self._run_validation(
                     val_loader,
                     distill_model=distill_model,
                     teacher_kept=teacher_kept,
@@ -306,9 +420,14 @@ class HybridDistiller:
                     alpha=alpha,
                     gamma=gamma,
                 )
-                if avg_val is not None:
-                    self.history["val_loss"].append(avg_val)
-                    maybe_log_wandb(run, {"val_loss": avg_val, "epoch": epoch, "step": global_step})
+                if val_metrics is not None:
+                    self.history["val_loss"].append(val_metrics["val_loss"])
+                    val_payload = {"val_loss": val_metrics["val_loss"], "epoch": epoch, "step": global_step}
+                    for metric_key in self._tracked_metric_keys():
+                        history_key = "val_{}".format(metric_key)
+                        self.history[history_key].append(val_metrics[history_key])
+                        val_payload[history_key] = val_metrics[history_key]
+                    maybe_log_wandb(run, val_payload)
         finally:
             maybe_finish_wandb(run)
 

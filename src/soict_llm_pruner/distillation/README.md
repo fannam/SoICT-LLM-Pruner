@@ -146,6 +146,37 @@ Validation metrics are again token-weighted:
 
 `L_val = (sum_b |Omega_b| (L_logits,b + gamma L_feat,b)) / (sum_b |Omega_b|)`
 
+## Hybrid OT Distillation
+
+Implemented by `HybridOTDistiller`.
+
+This variant keeps the same logits loss and feature MSE as `HybridDistiller`, then adds a hidden-state
+optimal-transport term on the aligned layers:
+
+`L_hybrid_ot = L_logits + gamma L_feat + lambda_ot L_ot`
+
+For one aligned layer and one sequence, let
+
+- `S = {P_i(h_s[t]) : t in Omega}`
+- `T = {h_t[t] : t in Omega}`
+
+after masking invalid tokens and optionally subsampling to at most `max_tokens_per_sequence` positions.
+
+The ground cost is
+
+`C_uv = 1 - cos(S_u, T_v) + beta_pos ((u - v) / max(n - 1, 1))^2`
+
+with a hard locality band `|u - v| <= window_radius`.
+
+The implementation solves an entropic OT problem with log-domain Sinkhorn iterations, then uses the debiased
+Sinkhorn divergence
+
+`L_ot = OT_epsilon(S, T) - 0.5 OT_epsilon(S, S) - 0.5 OT_epsilon(T, T)`
+
+where `OT_epsilon` reports only the final transport cost `<pi, C>`, not the entropy term.
+
+The package-level OT loss is the mean over aligned layers and valid sequences in the batch.
+
 ## Teacher Correction
 
 Implemented by `TeacherCorrection`.
@@ -196,5 +227,6 @@ tracking.
 
 - `LogitsDistiller`: `L_logits = alpha L_CE + (1 - alpha) L_KD`
 - `HybridDistiller`: `L_hybrid = L_logits + gamma L_feat`
+- `HybridOTDistiller`: `L_hybrid_ot = L_logits + gamma L_feat + lambda_ot L_ot`
 - `DistilModel`: per-layer projector bank `P_i`
 - `TeacherCorrection`: plain `outputs.loss` training with perplexity reporting

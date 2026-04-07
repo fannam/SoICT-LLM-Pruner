@@ -67,10 +67,12 @@ def test_factories_resolve_legacy_aliases_with_warnings():
 
 
 def test_distillation_namespace_smoke_import():
-    from soict_llm_pruner.distillation import HybridDistiller, LogitsDistiller
+    from soict_llm_pruner.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
 
     assert HybridDistiller is not None
+    assert HybridOTDistiller is not None
     assert LogitsDistiller is not None
+    assert OTConfig is not None
 
 
 def test_teacher_correction_namespace_smoke_import():
