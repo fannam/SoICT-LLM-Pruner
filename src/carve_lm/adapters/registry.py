@@ -7,6 +7,7 @@ from .decoder import GenericDecoderModelAdapter
 from .llama import LlamaModelAdapter
 from .mistral import MistralModelAdapter
 from .qwen2 import Qwen2ModelAdapter
+from .qwen3 import Qwen3ModelAdapter
 
 _MODEL_ADAPTERS: list[BaseModelAdapter] = []
 _FALLBACK_MODEL_ADAPTER = GenericDecoderModelAdapter()
@@ -58,4 +59,5 @@ def resolve_model_adapter(
 
 register_model_adapter(LlamaModelAdapter())
 register_model_adapter(Qwen2ModelAdapter())
+register_model_adapter(Qwen3ModelAdapter())
 register_model_adapter(MistralModelAdapter())

@@ -24,6 +24,7 @@ from .decoder import DecoderModelAdapter, GenericDecoderModelAdapter
 from .llama import LlamaModelAdapter
 from .mistral import MistralModelAdapter
 from .qwen2 import Qwen2ModelAdapter
+from .qwen3 import Qwen3ModelAdapter
 from .registry import (
     get_model_adapter,
     register_model_adapter,
@@ -43,6 +44,7 @@ __all__ = [
     "MLPProjectionBundle",
     "MistralModelAdapter",
     "Qwen2ModelAdapter",
+    "Qwen3ModelAdapter",
     "_is_json_like",
     "get_model_adapter",
     "import_object",

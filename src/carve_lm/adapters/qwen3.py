@@ -1,0 +1,18 @@
+from __future__ import annotations
+
+from transformers import Qwen3ForCausalLM
+
+from .decoder import DecoderModelAdapter
+
+
+class Qwen3ModelAdapter(DecoderModelAdapter):
+    """Adapter for Qwen3ForCausalLM.
+
+    Qwen3Attention adds per-head-dim q_norm and k_norm (shape: head_dim,) on top of
+    the standard decoder layout. These norms are applied after the projection along the
+    head_dim axis and are therefore independent of both the head count and the model
+    hidden_size, so no special handling is required during pruning.
+    """
+
+    def __init__(self):
+        super().__init__(name="qwen3", model_cls=Qwen3ForCausalLM)

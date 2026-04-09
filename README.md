@@ -53,6 +53,7 @@ Natively registered adapters:
 
 - **Llama** (`LlamaForCausalLM`) — Llama 2 / 3 family
 - **Qwen2** (`Qwen2ForCausalLM`) — Qwen 2 / 2.5 family
+- **Qwen3** (`Qwen3ForCausalLM`) — Qwen 3 family
 - **Mistral** (`MistralForCausalLM`) — Mistral family
 
 Any model that follows the standard HuggingFace decoder layout (`model.model.layers[*].{self_attn, mlp, input_layernorm, post_attention_layernorm}`) is automatically picked up by `GenericDecoderModelAdapter`.
