@@ -1,3 +1,11 @@
+"""
+Level-1 (element-level) width pruners.
+
+Prunes individual neurons, attention heads, GQA groups, or embedding
+channels within each decoder layer without removing entire layers or blocks.
+Also exposes the group-level and channel-level structured width pruners that
+operate on discovered coupling groups of parameters.
+"""
 from __future__ import annotations
 
 import copy
@@ -7,26 +15,42 @@ from typing import Mapping
 import torch
 import torch.nn as nn
 
-from ..core import (
+from ...core import (
     PRUNER_REGISTRY,
     PRUNING_STRATEGY_REGISTRY,
     calculate_embedding_channels_global_score,
 )
-from ._compat import warn_pruner_alias
-from ._shared import _BasePruner
+from .._compat import warn_pruner_alias
+from .._base import _BasePruner
+from .._engine.facade import WidthChannelPruner as _EngineWidthChannelPruner
+from .._engine.facade import WidthGroupPruner as _EngineWidthGroupPruner
 
+
+# ---------------------------------------------------------------------------
+# Extension point
+# ---------------------------------------------------------------------------
 
 class BaseElementPruningStrategy:
     """Extension point for element-level pruning strategies."""
 
-    def prune(self, pruner: "ElementPruner", **kwargs):
+    def prune(self, pruner: "WidthPruner", **kwargs):
         raise NotImplementedError
 
+
+# ---------------------------------------------------------------------------
+# WidthPruner
+# ---------------------------------------------------------------------------
 
 @PRUNER_REGISTRY.register("width", aliases=("element",))
 class WidthPruner(_BasePruner):
     """
     Generic width-oriented pruner backed by model adapters and pruning strategies.
+
+    Supports pruning along any of the element dimensions:
+    * attention query heads
+    * GQA attention groups (key/value heads)
+    * MLP neurons
+    * embedding channels (hidden dimension)
     """
 
     def __init__(self, original_model, device: str = "cuda", model_adapter=None):
@@ -314,11 +338,15 @@ class WidthPruner(_BasePruner):
         return embedding_importance if torch.is_tensor(embedding_importance) else torch.as_tensor(embedding_importance)
 
 
+# ---------------------------------------------------------------------------
+# Pruning strategies
+# ---------------------------------------------------------------------------
+
 @PRUNING_STRATEGY_REGISTRY.register("element.attention_query")
 class AttentionQueryPruningStrategy(BaseElementPruningStrategy):
     def prune(
         self,
-        pruner: ElementPruner,
+        pruner: WidthPruner,
         head_importance,
         target_num_attention_heads: int,
     ):
@@ -386,7 +414,7 @@ class AttentionQueryPruningStrategy(BaseElementPruningStrategy):
 class AttentionGroupPruningStrategy(BaseElementPruningStrategy):
     def prune(
         self,
-        pruner: ElementPruner,
+        pruner: WidthPruner,
         head_importance=None,
         target_group: int | None = None,
         group_importance=None,
@@ -470,7 +498,7 @@ class AttentionGroupPruningStrategy(BaseElementPruningStrategy):
 class MLPPruningStrategy(BaseElementPruningStrategy):
     def prune(
         self,
-        pruner: ElementPruner,
+        pruner: WidthPruner,
         neuron_importance,
         target_num_neurons: int,
     ):
@@ -537,7 +565,7 @@ class MLPPruningStrategy(BaseElementPruningStrategy):
 class EmbeddingChannelPruningStrategy(BaseElementPruningStrategy):
     def prune(
         self,
-        pruner: ElementPruner,
+        pruner: WidthPruner,
         embedding_importance,
         target_embedding_size: int,
     ):
@@ -641,6 +669,31 @@ class EmbeddingChannelPruningStrategy(BaseElementPruningStrategy):
         )
 
 
+# ---------------------------------------------------------------------------
+# Structured width pruners (group-coupling and channel-coupling)
+# ---------------------------------------------------------------------------
+
+@PRUNER_REGISTRY.register("width.group")
+class WidthGroupPruner(_EngineWidthGroupPruner):
+    """
+    Structured width pruner that discovers coupled parameter groups
+    (e.g. attention head bundles + tied MLP rows) and prunes by
+    group-level importance scores.
+    """
+
+
+@PRUNER_REGISTRY.register("width.channel")
+class WidthChannelPruner(_EngineWidthChannelPruner):
+    """
+    Structured width pruner that discovers channel bundles and prunes
+    along the hidden (embedding) dimension.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat aliases
+# ---------------------------------------------------------------------------
+
 def available_element_pruning_strategies() -> tuple[str, ...]:
     warnings.warn(
         "available_element_pruning_strategies() is deprecated; use WidthPruner.available_strategies().",
@@ -677,6 +730,12 @@ class MistralElementPruner(ElementPruner):
 __all__ = [
     "BaseElementPruningStrategy",
     "WidthPruner",
+    "WidthGroupPruner",
+    "WidthChannelPruner",
+    "AttentionQueryPruningStrategy",
+    "AttentionGroupPruningStrategy",
+    "MLPPruningStrategy",
+    "EmbeddingChannelPruningStrategy",
     "ElementPruner",
     "Llama3ElementPruner",
     "Qwen2ElementPruner",

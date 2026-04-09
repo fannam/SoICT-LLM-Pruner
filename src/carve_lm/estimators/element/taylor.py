@@ -4,8 +4,8 @@ from collections import defaultdict
 
 import torch
 
-from ..core import ESTIMATOR_REGISTRY
-from ..pruners._engine.utils import compute_causal_lm_loss, prepare_causal_lm_batch
+from ...core import ESTIMATOR_REGISTRY
+from ...pruners._engine.utils import compute_causal_lm_loss, prepare_causal_lm_batch
 
 
 @ESTIMATOR_REGISTRY.register("taylor.group")

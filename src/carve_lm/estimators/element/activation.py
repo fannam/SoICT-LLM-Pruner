@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from ..core import ESTIMATOR_REGISTRY
-from ._compat import warn_estimator_alias
-from ._shared import _BaseActivationElementEstimator
+from ...core import ESTIMATOR_REGISTRY
+from .._compat import warn_estimator_alias
+from .._base import _BaseActivationElementEstimator
 
 
 @ESTIMATOR_REGISTRY.register("activation.element", aliases=("element.activation",))

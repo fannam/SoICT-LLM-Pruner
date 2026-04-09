@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from soict_llm_pruner.adapters import AttentionProjectionBundle, BaseModelAdapter, MLPProjectionBundle
-from soict_llm_pruner.estimators import ActivationElementEstimator
+from carve_lm.adapters import AttentionProjectionBundle, BaseModelAdapter, MLPProjectionBundle
+from carve_lm.estimators import ActivationElementEstimator
 
 
 class IdentityNorm(nn.Module):

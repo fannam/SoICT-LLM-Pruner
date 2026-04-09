@@ -10,8 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from soict_llm_pruner.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
-from soict_llm_pruner.distillation.optimal_transport import masked_ot_loss, sinkhorn_divergence
+from carve_lm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
+from carve_lm.distillation.optimal_transport import masked_ot_loss, sinkhorn_divergence
 
 
 @dataclass
@@ -422,7 +422,7 @@ def test_masked_ot_loss_backpropagates_through_student_and_projector():
 
 
 def test_hybrid_ot_distiller_tracks_ot_history_and_logs_ot_loss(monkeypatch):
-    import soict_llm_pruner.distillation.hybrid as hybrid_module
+    import carve_lm.distillation.hybrid as hybrid_module
 
     torch.manual_seed(0)
     teacher = TinyCausalLM(TinyConfig(hidden_size=8, num_hidden_layers=3, vocab_size=29))
@@ -486,7 +486,7 @@ def test_hybrid_ot_distiller_tracks_ot_history_and_logs_ot_loss(monkeypatch):
 def test_teacher_correction_save_model_persists_tokenizer(tmp_path):
     pytest.importorskip("accelerate")
 
-    from soict_llm_pruner.distillation import TeacherCorrection
+    from carve_lm.distillation import TeacherCorrection
 
     model = TinyCausalLM(TinyConfig(hidden_size=8, num_hidden_layers=2, vocab_size=19))
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)

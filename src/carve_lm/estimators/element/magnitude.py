@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import torch
 
-from ..core import ESTIMATOR_REGISTRY
-from ..pruners._engine.utils import resolve_slice_tensor
-from ._compat import warn_estimator_alias
-from ._shared import _BaseWeightMagnitudeEstimator
+from ...core import ESTIMATOR_REGISTRY
+from ...pruners._engine.utils import resolve_slice_tensor
+from .._compat import warn_estimator_alias
+from .._base import _BaseWeightMagnitudeEstimator
 
 
 @ESTIMATOR_REGISTRY.register("magnitude.element", aliases=("element.weight_magnitude",))

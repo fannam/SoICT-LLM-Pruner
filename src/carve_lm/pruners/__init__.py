@@ -1,3 +1,12 @@
+"""
+Tri-level structured pruners for decoder-only LLMs.
+
+Levels
+------
+* element  (Level 1) – neurons, embedding channels, attention heads, GQA groups
+* layer    (Level 2) – attention sublayer and MLP sublayer within a decoder block
+* block    (Level 3) – contiguous decoder blocks (depth pruning)
+"""
 from __future__ import annotations
 
 import warnings
@@ -5,20 +14,32 @@ import warnings
 from ..core import PRUNER_REGISTRY
 from ._engine.config import DepthLayerConfig, EstimatorSpec, ImportanceConfig, WidthChannelConfig, WidthGroupConfig
 from ._engine.types import PruningResult
-from .block import BlockPruner, DepthBlockPruner, Llama3BlockPruner, MistralBlockPruner, Qwen2BlockPruner
-from .component import ComponentPruner
-from .depth import DepthLayerPruner
+from .block import (
+    BlockPruner,
+    DepthBlockPruner,
+    DepthLayerPruner,
+    Llama3BlockPruner,
+    MistralBlockPruner,
+    Qwen2BlockPruner,
+)
 from .element import (
     ElementPruner,
     Llama3ElementPruner,
     MistralElementPruner,
     Qwen2ElementPruner,
+    WidthChannelPruner,
+    WidthGroupPruner,
     WidthPruner,
     available_element_pruning_strategies,
 )
-from .layer import LayerPruner, Llama3LayerPruner, MistralLayerPruner, Qwen2LayerPruner
+from .layer import (
+    ComponentPruner,
+    LayerPruner,
+    Llama3LayerPruner,
+    MistralLayerPruner,
+    Qwen2LayerPruner,
+)
 from .structured import StructuredBlockPruner, StructuredChannelPruner, StructuredLayerPruner
-from .width import WidthChannelPruner, WidthGroupPruner
 
 
 def create_pruner(name: str, *args, **kwargs):
@@ -47,18 +68,23 @@ def available_pruners(
 
 
 __all__ = [
+    # Config / result types
     "EstimatorSpec",
     "WidthGroupConfig",
     "WidthChannelConfig",
     "DepthLayerConfig",
     "ImportanceConfig",
     "PruningResult",
+    # Level 1 – element
     "WidthPruner",
     "WidthGroupPruner",
     "WidthChannelPruner",
+    # Level 2 – layer
     "ComponentPruner",
+    # Level 3 – block
     "DepthBlockPruner",
     "DepthLayerPruner",
+    # Backward-compat aliases
     "ElementPruner",
     "LayerPruner",
     "BlockPruner",
@@ -75,6 +101,7 @@ __all__ = [
     "StructuredChannelPruner",
     "StructuredLayerPruner",
     "available_element_pruning_strategies",
+    # Factory helpers
     "available_pruners",
     "create_pruner",
 ]

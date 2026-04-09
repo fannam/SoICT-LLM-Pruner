@@ -5,13 +5,13 @@ from tests.fixtures.synthetic_models import SyntheticCausalLM, SyntheticConfig
 
 
 def test_public_namespaces_smoke_import():
-    from soict_llm_pruner import __version__
-    from soict_llm_pruner.adapters import BaseModelAdapter
-    from soict_llm_pruner.core import ESTIMATOR_REGISTRY
-    from soict_llm_pruner.estimators import ActivationEstimator, create_estimator
-    from soict_llm_pruner.evaluation import LLMMeasurer
-    from soict_llm_pruner.pruners import WidthGroupConfig, WidthPruner
-    from soict_llm_pruner.pruners.structured import StructuredBlockPruner
+    from carve_lm import __version__
+    from carve_lm.adapters import BaseModelAdapter
+    from carve_lm.core import ESTIMATOR_REGISTRY
+    from carve_lm.estimators import ActivationEstimator, create_estimator
+    from carve_lm.evaluation import LLMMeasurer
+    from carve_lm.pruners import WidthGroupConfig, WidthPruner
+    from carve_lm.pruners.structured import StructuredBlockPruner
 
     assert __version__
     assert BaseModelAdapter is not None
@@ -25,8 +25,8 @@ def test_public_namespaces_smoke_import():
 
 
 def test_canonical_registry_names_are_listed_by_default():
-    from soict_llm_pruner.estimators import available_estimators
-    from soict_llm_pruner.pruners import available_pruners
+    from carve_lm.estimators import available_estimators
+    from carve_lm.pruners import available_pruners
 
     assert available_estimators() == (
         "activation.element",
@@ -52,8 +52,8 @@ def test_canonical_registry_names_are_listed_by_default():
 
 
 def test_factories_resolve_legacy_aliases_with_warnings():
-    from soict_llm_pruner.estimators import create_estimator
-    from soict_llm_pruner.pruners import create_pruner
+    from carve_lm.estimators import create_estimator
+    from carve_lm.pruners import create_pruner
 
     model = SyntheticCausalLM(SyntheticConfig())
 
@@ -67,7 +67,7 @@ def test_factories_resolve_legacy_aliases_with_warnings():
 
 
 def test_distillation_namespace_smoke_import():
-    from soict_llm_pruner.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
+    from carve_lm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
 
     assert HybridDistiller is not None
     assert HybridOTDistiller is not None
@@ -78,6 +78,6 @@ def test_distillation_namespace_smoke_import():
 def test_teacher_correction_namespace_smoke_import():
     pytest.importorskip("accelerate")
 
-    from soict_llm_pruner.distillation import TeacherCorrection
+    from carve_lm.distillation import TeacherCorrection
 
     assert TeacherCorrection is not None

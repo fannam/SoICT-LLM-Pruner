@@ -6,9 +6,9 @@ import pytest
 import torch
 import torch.nn as nn
 
-from soict_llm_pruner.adapters import AttentionProjectionBundle, BaseModelAdapter, MLPProjectionBundle
-from soict_llm_pruner.estimators import WeightMagnitudeElementEstimator
-from soict_llm_pruner.pruners import ElementPruner
+from carve_lm.adapters import AttentionProjectionBundle, BaseModelAdapter, MLPProjectionBundle
+from carve_lm.estimators import WeightMagnitudeElementEstimator
+from carve_lm.pruners import ElementPruner
 
 
 class WeightOnlyNorm(nn.Module):

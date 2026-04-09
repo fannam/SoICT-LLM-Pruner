@@ -1,48 +1,75 @@
+"""
+Tri-level importance estimators for structured LLM pruning.
+
+Levels
+------
+* element  (Level 1) – neurons, embedding channels, attention heads, GQA groups
+* layer    (Level 2) – attention sublayer and MLP sublayer within a decoder block
+* block    (Level 3) – contiguous decoder blocks
+"""
 from __future__ import annotations
 
 import warnings
 
 from ..core import ESTIMATOR_REGISTRY
-from .activation import (
-    ActivationElementEstimator,
-    ActivationEstimator,
-    Llama3ActivationElementEstimator,
-    MistralActivationElementEstimator,
-    Qwen2ActivationElementEstimator,
-)
 from .block import (
     BlockPerplexityEstimator,
+    BlockSimilarityEstimator,
     Llama3BlockPerplexityEstimator,
     Llama3SimilarityBlockEstimator,
     MistralBlockPerplexityEstimator,
     MistralSimilarityBlockEstimator,
+    PerplexityEstimator,
     Qwen2BlockPerplexityEstimator,
     Qwen2SimilarityBlockEstimator,
     SimilarityBlockEstimator,
 )
+from .element import (
+    ActivationElementEstimator,
+    ActivationEstimator,
+    Llama3ActivationElementEstimator,
+    Llama3WeightMagnitudeEstimator,
+    MagnitudeChannelEstimator,
+    MagnitudeEstimator,
+    MagnitudeGroupEstimator,
+    MistralActivationElementEstimator,
+    MistralWeightMagnitudeEstimator,
+    Qwen2ActivationElementEstimator,
+    Qwen2WeightMagnitudeEstimator,
+    RandomGroupEstimator,
+    TaylorGroupEstimator,
+    WeightMagnitudeElementEstimator,
+)
 from .layer import (
+    LayerSimilarityEstimator,
     Llama3SimilarityLayerEstimator,
     MistralSimilarityLayerEstimator,
     Qwen2SimilarityLayerEstimator,
     SimilarityLayerEstimator,
 )
-from .magnitude import (
-    Llama3WeightMagnitudeEstimator,
-    MagnitudeChannelEstimator,
-    MagnitudeEstimator,
-    MagnitudeGroupEstimator,
-    MistralWeightMagnitudeEstimator,
-    Qwen2WeightMagnitudeEstimator,
-    WeightMagnitudeElementEstimator,
-)
-from .perplexity import PerplexityEstimator
-from .random import RandomGroupEstimator
-from .similarity import (
-    BlockSimilarityEstimator,
-    LayerSimilarityEstimator,
-    SimilarityEstimator,
-)
-from .taylor import TaylorGroupEstimator
+from ._base import _BaseEstimator
+
+
+class SimilarityEstimator(_BaseEstimator):
+    """Facade exposing both layer-wise and block-wise similarity scoring."""
+
+    def estimate_layers(self, dataloader):
+        estimator = LayerSimilarityEstimator(
+            self.model,
+            device=self.device,
+            model_adapter=self.adapter,
+        )
+        return estimator.estimate(dataloader)
+
+    def estimate_blocks(self, dataloader, *, block_size: int):
+        from .block.similarity import BlockSimilarityEstimator as _BlockSim
+        estimator = _BlockSim(
+            self.model,
+            block_size=block_size,
+            device=self.device,
+            model_adapter=self.adapter,
+        )
+        return estimator.estimate(dataloader)
 
 
 def create_estimator(name: str, *args, **kwargs):
@@ -71,16 +98,21 @@ def available_estimators(
 
 
 __all__ = [
+    # Level 1 – element
     "ActivationEstimator",
     "MagnitudeEstimator",
-    "SimilarityEstimator",
-    "PerplexityEstimator",
-    "RandomGroupEstimator",
     "MagnitudeGroupEstimator",
     "MagnitudeChannelEstimator",
     "TaylorGroupEstimator",
+    "RandomGroupEstimator",
+    # Level 2 – layer
     "LayerSimilarityEstimator",
+    # Level 3 – block
     "BlockSimilarityEstimator",
+    "PerplexityEstimator",
+    # Facade
+    "SimilarityEstimator",
+    # Backward-compat aliases
     "ActivationElementEstimator",
     "WeightMagnitudeElementEstimator",
     "SimilarityLayerEstimator",
@@ -101,6 +133,7 @@ __all__ = [
     "Llama3BlockPerplexityEstimator",
     "Qwen2BlockPerplexityEstimator",
     "MistralBlockPerplexityEstimator",
+    # Factory helpers
     "available_estimators",
     "create_estimator",
 ]

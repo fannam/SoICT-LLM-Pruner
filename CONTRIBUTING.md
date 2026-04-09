@@ -11,7 +11,7 @@ pip install -e ".[dev,train]"
 
 ## Development Workflow
 
-1. Keep library code under `src/soict_llm_pruner/`.
+1. Keep library code under `src/carve_lm/`.
 2. Put runnable examples in `examples/` and operational scripts in `scripts/`.
 3. Add or update tests for any behavior change.
 4. Run lint and tests before opening a PR.
@@ -23,7 +23,7 @@ pytest
 
 ## Package Layout
 
-- `src/soict_llm_pruner/`: shipped library code
+- `src/carve_lm/`: shipped library code
 - `tests/`: unit and integration coverage
 - `docs/`: architecture and migration notes
 - `examples/`: minimal usage samples

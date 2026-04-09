@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from ..core import ESTIMATOR_REGISTRY
+from ...core import ESTIMATOR_REGISTRY
 
 
 @ESTIMATOR_REGISTRY.register("random.group")

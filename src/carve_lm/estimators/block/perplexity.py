@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from ..core import ESTIMATOR_REGISTRY
-from ._compat import warn_estimator_alias
-from ._shared import _BaseBlockPerplexityEstimator
+from ...core import ESTIMATOR_REGISTRY
+from .._compat import warn_estimator_alias
+from .._base import _BaseBlockPerplexityEstimator
 
 
 @ESTIMATOR_REGISTRY.register("perplexity.block", aliases=("block.perplexity",))
 class PerplexityEstimator(_BaseBlockPerplexityEstimator):
-    """Adapter-backed perplexity estimator for contiguous decoder blocks."""
+    """
+    Perplexity-delta importance estimator for contiguous decoder blocks.
+
+    Temporarily replaces each candidate block with identity modules and
+    measures how much perplexity increases.  Higher delta → block is more
+    important for language modelling → keep it.
+    """
 
 
 class BlockPerplexityEstimator(PerplexityEstimator):

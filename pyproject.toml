@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "soict-llm-pruner"
+name = "carve-lm"
 version = "0.1.0"
-description = "Unified pruning library for decoder-only large language models."
+description = "Tri-level structured pruning library for decoder-only large language models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -66,4 +66,4 @@ extend-exclude = ["notebooks"]
 select = ["E", "F", "I"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["soict_llm_pruner"]
+known-first-party = ["carve_lm"]

@@ -10,9 +10,9 @@ import torch.nn as nn
 from tests.fixtures.synthetic_models import SyntheticCausalLM, SyntheticConfig
 from torch.utils.data import DataLoader
 
-from soict_llm_pruner.estimators import ActivationElementEstimator
-from soict_llm_pruner.estimators._shared import _BaseBlockPerplexityEstimator
-from soict_llm_pruner.pruners.structured import (
+from carve_lm.estimators import ActivationElementEstimator
+from carve_lm.estimators._shared import _BaseBlockPerplexityEstimator
+from carve_lm.pruners.structured import (
     BlockWiseConfig,
     ChannelWiseConfig,
     DiscoveryContext,
@@ -27,7 +27,7 @@ from soict_llm_pruner.pruners.structured import (
     discover_channelwise,
     estimate_importance,
 )
-from soict_llm_pruner.pruners.structured.spec import object_path
+from carve_lm.pruners.structured.spec import object_path
 
 
 def make_model(**overrides) -> SyntheticCausalLM:
@@ -591,9 +591,9 @@ def test_layerwise_persistence_roundtrip_recreates_logits(tmp_path: Path):
 
 
 def test_unified_package_does_not_import_legacy_namespaces():
-    package_dir = Path(__file__).resolve().parents[2] / "src" / "soict_llm_pruner"
+    package_dir = Path(__file__).resolve().parents[2] / "src" / "carve_lm"
     forbidden_tokens = (
-        "soict_llm_pruner_core",
+        "carve_lm_core",
         "llm_pruner_paper",
         "from estimator",
         "from pruner",

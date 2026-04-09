@@ -2,10 +2,10 @@
 
 ## Unified Namespace
 
-All shipped code now lives under `src/soict_llm_pruner/`.
+All shipped code now lives under `src/carve_lm/`.
 
 ```text
-soict_llm_pruner/
+carve_lm/
 ├── adapters/
 ├── core/
 ├── estimators/
@@ -15,13 +15,13 @@ soict_llm_pruner/
 └── evaluation/
 ```
 
-There are no compatibility shims for the old top-level packages. Consumers are expected to import directly from `soict_llm_pruner.*`.
+There are no compatibility shims for the old top-level packages. Consumers are expected to import directly from `carve_lm.*`.
 
 ## Core Concepts
 
 ### Adapters
 
-`soict_llm_pruner.adapters` defines the model-facing contract used by the classic estimator/pruner stack. A `BaseModelAdapter` exposes:
+`carve_lm.adapters` defines the model-facing contract used by the classic estimator/pruner stack. A `BaseModelAdapter` exposes:
 
 - decoder layers
 - attention and MLP projections
@@ -33,7 +33,7 @@ This keeps pruning logic independent from model-family-specific attribute paths.
 
 ### Registries
 
-`soict_llm_pruner.core.registry` owns three extension points:
+`carve_lm.core.registry` owns three extension points:
 
 - `ESTIMATOR_REGISTRY`
 - `PRUNER_REGISTRY`
@@ -43,7 +43,7 @@ Classic estimators and pruners register themselves here so external code can use
 
 ### Estimators
 
-`soict_llm_pruner.estimators` now uses a method-first taxonomy:
+`carve_lm.estimators` now uses a method-first taxonomy:
 
 - `activation.element`
 - `magnitude.element`
@@ -66,7 +66,7 @@ The weight-magnitude estimator is data free. Its group scores are structured sum
 
 ### Pruners
 
-`soict_llm_pruner.pruners` now uses an effect-first taxonomy:
+`carve_lm.pruners` now uses an effect-first taxonomy:
 
 - `width`
 - `width.group`
@@ -102,7 +102,7 @@ Structured persistence is manifest-based. `save_pruned()` stores weights plus `l
 
 ### Distillation And Recovery
 
-`soict_llm_pruner.distillation` contains reusable training helpers:
+`carve_lm.distillation` contains reusable training helpers:
 
 - `HybridDistiller`
 - `LogitsDistiller`
@@ -112,7 +112,7 @@ Operational training scripts live in `scripts/recovery/`.
 
 ### Evaluation
 
-`soict_llm_pruner.evaluation` currently exposes `LLMMeasurer` for latency and throughput measurement.
+`carve_lm.evaluation` currently exposes `LLMMeasurer` for latency and throughput measurement.
 
 ## Repository Layout
 

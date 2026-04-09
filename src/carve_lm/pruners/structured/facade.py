@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from .._compat import warn_pruner_alias
-from ..depth import DepthLayerPruner
-from ..width import WidthChannelPruner, WidthGroupPruner
+from ..block.depth import DepthLayerPruner
+from ..element.width import WidthChannelPruner, WidthGroupPruner
 
 
 class StructuredBlockPruner(WidthGroupPruner):
