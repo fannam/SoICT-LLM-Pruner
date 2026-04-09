@@ -8,7 +8,7 @@ Tri-level structured pruning library for decoder-only large language models, pub
 
 ```bash
 git clone https://github.com/fannam/CarveLM.git
-cd SoICT-LLM-Pruner
+cd CarveLM
 pip install -e .
 ```
 
