@@ -7,7 +7,7 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from carve_lm.distillation import TeacherCorrection
+from carve_lm.llm.distillation import TeacherCorrection
 
 
 def parse_args():

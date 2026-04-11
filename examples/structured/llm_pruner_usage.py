@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM
 
-from carve_lm.pruners import (
+from carve_lm.llm.pruners import (
     EstimatorSpec,
     WidthGroupConfig,
     WidthGroupPruner,

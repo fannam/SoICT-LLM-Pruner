@@ -111,7 +111,8 @@ class SyntheticCausalLM(nn.Module):
     def forward(self, input_ids=None, labels=None, **kwargs):
         hidden_states = self.model.embed_tokens(input_ids)
         for layer in self.model.layers:
-            hidden_states = layer(hidden_states)
+            layer_output = layer(hidden_states)
+            hidden_states = layer_output[0] if isinstance(layer_output, tuple) else layer_output
         hidden_states = self.model.norm(hidden_states)
         logits = self.lm_head(hidden_states)
         outputs = {"logits": logits}

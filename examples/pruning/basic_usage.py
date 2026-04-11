@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from transformers import AutoModelForCausalLM
 
-from carve_lm.estimators import create_estimator
-from carve_lm.pruners import create_pruner
+from carve_lm.llm.estimators import create_estimator
+from carve_lm.llm.pruners import create_pruner
 
 
 def main() -> None:

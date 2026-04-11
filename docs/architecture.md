@@ -1,27 +1,36 @@
 # Architecture
 
-## Unified Namespace
+## Split Namespace
 
 All shipped code now lives under `src/carve_lm/`.
 
 ```text
 carve_lm/
-├── adapters/
-├── core/
-├── estimators/
-├── pruners/
-│   └── structured/
-├── distillation/
-└── evaluation/
+├── llm/
+│   ├── adapters/
+│   ├── core/
+│   ├── distillation/
+│   ├── estimators/
+│   ├── evaluation/
+│   └── pruners/
+│       └── structured/
+├── vlm/
+│   ├── adapters/
+│   ├── core/
+│   ├── distillation/
+│   ├── estimators/
+│   ├── evaluation/
+│   └── pruners/
+│       └── structured/
 ```
 
-There are no compatibility shims for the old top-level packages. Consumers are expected to import directly from `carve_lm.*`.
+There are no compatibility shims for the old root packages. Consumers are expected to import directly from `carve_lm.llm.*` or `carve_lm.vlm.*`.
 
 ## Core Concepts
 
 ### Adapters
 
-`carve_lm.adapters` defines the model-facing contract used by the classic estimator/pruner stack. A `BaseModelAdapter` exposes:
+`carve_lm.llm.adapters` and `carve_lm.vlm.adapters` define the model-facing contracts used by the pruning stacks. A `BaseModelAdapter` exposes:
 
 - decoder layers
 - attention and MLP projections
@@ -33,7 +42,7 @@ This keeps pruning logic independent from model-family-specific attribute paths.
 
 ### Registries
 
-`carve_lm.core.registry` owns three extension points:
+Each domain-local core registry (`carve_lm.llm.core.registry`, `carve_lm.vlm.core.registry`) owns three extension points:
 
 - `ESTIMATOR_REGISTRY`
 - `PRUNER_REGISTRY`
@@ -43,7 +52,7 @@ Classic estimators and pruners register themselves here so external code can use
 
 ### Estimators
 
-`carve_lm.estimators` now uses a method-first taxonomy:
+`carve_lm.llm.estimators` and `carve_lm.vlm.estimators` use a method-first taxonomy:
 
 - `activation.element`
 - `magnitude.element`
@@ -66,7 +75,7 @@ The weight-magnitude estimator is data free. Its group scores are structured sum
 
 ### Pruners
 
-`carve_lm.pruners` now uses an effect-first taxonomy:
+`carve_lm.llm.pruners` and `carve_lm.vlm.pruners` use an effect-first taxonomy:
 
 - `width`
 - `width.group`
@@ -98,26 +107,31 @@ Structured block-wise discovery creates only two group families:
 - attention groups anchored on `q_proj`
 - MLP groups anchored on `gate_proj`
 
-Structured persistence is manifest-based. `save_pruned()` stores weights plus `llm_pruner_manifest.json`, and `load_pruned()` reconstructs the dense base architecture before replaying the structural rewrite. Manifest v2 records canonical pruner names, adapter metadata, and config payloads.
+Structured persistence is manifest-based. LLM pruners store `llm_pruner_manifest.json`; VLM pruners store `vlm_pruner_manifest.json`. `load_pruned()` reconstructs the dense base architecture before replaying the structural rewrite. Manifest v2 records canonical pruner names, adapter metadata, and config payloads.
 
 ### Distillation And Recovery
 
-`carve_lm.distillation` contains reusable training helpers:
+`carve_lm.llm.distillation` contains the LLM recovery helpers:
 
 - `HybridDistiller`
 - `LogitsDistiller`
 - `TeacherCorrection`
 
+`carve_lm.vlm.distillation` mirrors the same API, but preserves full multimodal processor batches and forwards every non-label key through teacher and student calls.
+
 Operational training scripts live in `scripts/recovery/`.
 
 ### Evaluation
 
-`carve_lm.evaluation` currently exposes `LLMMeasurer` for latency and throughput measurement.
+`carve_lm.llm.evaluation` exposes `LLMMeasurer` for text-generation latency and throughput measurement.
+
+`carve_lm.vlm.evaluation` exposes `VLMMeasurer` for multimodal generation latency and throughput measurement from processor-style batches.
 
 ## Repository Layout
 
 - `examples/`: minimal importable usage examples
 - `scripts/`: operational entrypoints
 - `notebooks/`: interactive demos
-- `tests/unit/`: fast behavioral coverage
+- `tests/llm/unit/`: fast LLM behavioral coverage
+- `tests/vlm/unit/`: fast VLM behavioral coverage
 - `tests/integration/`: cross-module and persistence coverage

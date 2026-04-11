@@ -1,4 +1,4 @@
-from carve_lm.evaluation import LLMMeasurer
+from carve_lm.llm.evaluation import LLMMeasurer
 
 if __name__ == '__main__':
     # --- Configuration ---

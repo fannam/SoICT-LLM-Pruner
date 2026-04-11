@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "carve-lm"
 version = "0.1.0"
-description = "Tri-level structured pruning library for decoder-only large language models."
+description = "Tri-level structured pruning library for LLM and VLM transformer models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
   { name = "Phan Hoang Nam", email = "phanhoangnam234@gmail.com" },
 ]
-keywords = ["llm", "pruning", "transformers", "compression", "structured-pruning"]
+keywords = ["llm", "vlm", "pruning", "transformers", "compression", "structured-pruning"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -60,7 +60,7 @@ addopts = "-q"
 target-version = "py310"
 src = ["src", "tests", "examples", "scripts"]
 line-length = 120
-extend-exclude = ["notebooks"]
+extend-exclude = ["Notebook", "notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
