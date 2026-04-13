@@ -3,9 +3,9 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
-    "components",
-    "distillation",
-    "evaluation",
+    "language",
+    "merger",
+    "vision",
 ]
 
 

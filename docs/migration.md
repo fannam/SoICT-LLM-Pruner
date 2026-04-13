@@ -49,9 +49,9 @@ Prefer the canonical namespaces for new code:
 
 For multimodal pruning, prefer the component-scoped VLM path:
 
-- `carve_lm.vlm.language.adapters`
-- `carve_lm.vlm.language.estimators`
-- `carve_lm.vlm.language.pruners`
+- `carve_lm.vlm.components.language.adapters`
+- `carve_lm.vlm.components.language.estimators`
+- `carve_lm.vlm.components.language.pruners`
 - `carve_lm.vlm.distillation`
 - `carve_lm.vlm.evaluation`
 
@@ -61,7 +61,7 @@ For multimodal pruning, prefer the component-scoped VLM path:
 - Structured pruning compatibility imports still work, but the canonical LLM API now lives under `carve_lm.llm.pruners`.
 - `save_pruned()` and `load_pruned()` remain the supported persistence path for structured outputs.
 - Recovery and evaluation utilities are domain-local now: use `carve_lm.llm.*` for text-only workflows and `carve_lm.vlm.*` for multimodal workflows.
-- Within `carve_lm.vlm`, pruning is component-scoped: use `carve_lm.vlm.language.*` for the current decoder-side stack. `carve_lm.vlm.vision.*` and `carve_lm.vlm.merger.*` are reserved namespaces for future component-specific stacks.
+- Within `carve_lm.vlm`, pruning is component-scoped: use `carve_lm.vlm.components.language.*` for the current decoder-side stack. `carve_lm.vlm.components.vision.*` and `carve_lm.vlm.components.merger.*` are reserved namespaces for future component-specific stacks.
 
 ## Validation Checklist
 

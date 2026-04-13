@@ -43,13 +43,13 @@ def test_llm_public_namespaces_smoke_import():
 
 
 def test_vlm_public_namespaces_smoke_import():
+    from carve_lm.vlm.components.language.adapters import BaseModelAdapter, resolve_model_adapter
+    from carve_lm.vlm.components.language.estimators import ActivationEstimator
+    from carve_lm.vlm.components.language.pruners import WidthGroupConfig, WidthPruner
+    from carve_lm.vlm.components.merger.estimators import available_estimators as available_merger_estimators
+    from carve_lm.vlm.components.vision.pruners import available_pruners as available_vision_pruners
     from carve_lm.vlm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
     from carve_lm.vlm.evaluation import VLMMeasurer
-    from carve_lm.vlm.language.adapters import BaseModelAdapter, resolve_model_adapter
-    from carve_lm.vlm.language.estimators import ActivationEstimator
-    from carve_lm.vlm.language.pruners import WidthGroupConfig, WidthPruner
-    from carve_lm.vlm.merger.estimators import available_estimators as available_merger_estimators
-    from carve_lm.vlm.vision.pruners import available_pruners as available_vision_pruners
 
     assert BaseModelAdapter is not None
     assert resolve_model_adapter is not None
@@ -76,7 +76,10 @@ def test_old_root_pruning_imports_are_removed():
         "carve_lm.vlm.adapters",
         "carve_lm.vlm.core",
         "carve_lm.vlm.estimators",
+        "carve_lm.vlm.language",
+        "carve_lm.vlm.merger",
         "carve_lm.vlm.pruners",
+        "carve_lm.vlm.vision",
     ):
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module(module_name)

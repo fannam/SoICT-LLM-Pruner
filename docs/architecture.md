@@ -15,24 +15,25 @@ carve_lm/
 │   └── pruners/
 │       └── structured/
 ├── vlm/
+│   ├── components/
+│   │   ├── language/
+│   │   │   ├── adapters/
+│   │   │   ├── core/
+│   │   │   ├── estimators/
+│   │   │   └── pruners/
+│   │   │       └── structured/
+│   │   ├── merger/
+│   │   │   ├── adapters/
+│   │   │   ├── core/
+│   │   │   ├── estimators/
+│   │   │   └── pruners/
+│   │   └── vision/
+│   │       ├── adapters/
+│   │       ├── core/
+│   │       ├── estimators/
+│   │       └── pruners/
 │   ├── distillation/
 │   ├── evaluation/
-│   ├── language/
-│   │   ├── adapters/
-│   │   ├── core/
-│   │   ├── estimators/
-│   │   └── pruners/
-│   │       └── structured/
-│   ├── merger/
-│   │   ├── adapters/
-│   │   ├── core/
-│   │   ├── estimators/
-│   │   └── pruners/
-│   └── vision/
-│       ├── adapters/
-│       ├── core/
-│       ├── estimators/
-│       └── pruners/
 ```
 
 There are no compatibility shims for the old root packages. Consumers are expected to import directly from `carve_lm.llm.*` or `carve_lm.vlm.*`.
@@ -41,7 +42,7 @@ There are no compatibility shims for the old root packages. Consumers are expect
 
 ### Adapters
 
-`carve_lm.llm.adapters` and `carve_lm.vlm.language.adapters` define the model-facing contracts used by the active pruning stacks. A `BaseModelAdapter` exposes:
+`carve_lm.llm.adapters` and `carve_lm.vlm.components.language.adapters` define the model-facing contracts used by the active pruning stacks. A `BaseModelAdapter` exposes:
 
 - decoder layers
 - attention and MLP projections
@@ -53,7 +54,7 @@ This keeps pruning logic independent from model-family-specific attribute paths.
 
 ### Registries
 
-Each domain-local core registry (`carve_lm.llm.core.registry`, `carve_lm.vlm.language.core.registry`, and the placeholder registries under `carve_lm.vlm.vision.core.registry` / `carve_lm.vlm.merger.core.registry`) owns three extension points:
+Each domain-local core registry (`carve_lm.llm.core.registry`, `carve_lm.vlm.components.language.core.registry`, and the placeholder registries under `carve_lm.vlm.components.vision.core.registry` / `carve_lm.vlm.components.merger.core.registry`) owns three extension points:
 
 - `ESTIMATOR_REGISTRY`
 - `PRUNER_REGISTRY`
@@ -63,7 +64,7 @@ Classic estimators and pruners register themselves here so external code can use
 
 ### Estimators
 
-`carve_lm.llm.estimators` and `carve_lm.vlm.language.estimators` use a method-first taxonomy:
+`carve_lm.llm.estimators` and `carve_lm.vlm.components.language.estimators` use a method-first taxonomy:
 
 - `activation.element`
 - `magnitude.element`
@@ -86,7 +87,7 @@ The weight-magnitude estimator is data free. Its group scores are structured sum
 
 ### Pruners
 
-`carve_lm.llm.pruners` and `carve_lm.vlm.language.pruners` use an effect-first taxonomy:
+`carve_lm.llm.pruners` and `carve_lm.vlm.components.language.pruners` use an effect-first taxonomy:
 
 - `width`
 - `width.group`
@@ -122,9 +123,9 @@ Structured persistence is manifest-based. LLM pruners store `llm_pruner_manifest
 
 The VLM namespace is now component-scoped:
 
-- `carve_lm.vlm.language.*`: active decoder/text pruning stack
-- `carve_lm.vlm.vision.*`: reserved for future vision-specific estimators and pruners
-- `carve_lm.vlm.merger.*`: reserved for future merger-specific estimators and pruners
+- `carve_lm.vlm.components.language.*`: active decoder/text pruning stack
+- `carve_lm.vlm.components.vision.*`: reserved for future vision-specific estimators and pruners
+- `carve_lm.vlm.components.merger.*`: reserved for future merger-specific estimators and pruners
 
 ### Distillation And Recovery
 

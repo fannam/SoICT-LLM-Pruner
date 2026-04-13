@@ -28,11 +28,11 @@ pip install -e ".[notebooks]"  # jupyter
 | `carve_lm.llm.core` | LLM registries (`ESTIMATOR_REGISTRY`, `PRUNER_REGISTRY`), identity pass-through layers, and scoring helpers. |
 | `carve_lm.llm.estimators` | **Tri-level** LLM importance estimators. Factory: `create_estimator`. |
 | `carve_lm.llm.pruners` | **Tri-level** LLM structured pruners. Config types and `create_pruner` factory. |
-| `carve_lm.vlm.language.adapters` | Decoder-language adapter contracts and registry for multimodal models. `Qwen2_5_VLModelAdapter` is registered when the local `transformers` build exposes it. |
-| `carve_lm.vlm.language.estimators` | Tri-level VLM estimators for decoder-side pruning on the language component. |
-| `carve_lm.vlm.language.pruners` | Tri-level VLM pruners for decoder-side pruning on the language component. |
-| `carve_lm.vlm.vision.*` | Reserved namespace for vision-component adapters, estimators, and pruners. No concrete pruning stack is registered in v1. |
-| `carve_lm.vlm.merger.*` | Reserved namespace for merger-component adapters, estimators, and pruners. No concrete pruning stack is registered in v1. |
+| `carve_lm.vlm.components.language.adapters` | Decoder-language adapter contracts and registry for multimodal models. `Qwen2_5_VLModelAdapter` is registered when the local `transformers` build exposes it. |
+| `carve_lm.vlm.components.language.estimators` | Tri-level VLM estimators for decoder-side pruning on the language component. |
+| `carve_lm.vlm.components.language.pruners` | Tri-level VLM pruners for decoder-side pruning on the language component. |
+| `carve_lm.vlm.components.vision.*` | Reserved namespace for vision-component adapters, estimators, and pruners. No concrete pruning stack is registered in v1. |
+| `carve_lm.vlm.components.merger.*` | Reserved namespace for merger-component adapters, estimators, and pruners. No concrete pruning stack is registered in v1. |
 | `carve_lm.llm.distillation` | LLM recovery helpers: `LogitsDistiller`, `HybridDistiller`, `HybridOTDistiller`, `TeacherCorrection` (requires `[train]`). |
 | `carve_lm.llm.evaluation` | Text-generation latency and throughput measurement via `LLMMeasurer`. |
 | `carve_lm.vlm.distillation` | VLM recovery helpers with multimodal batch forwarding for decoder-side distillation. |
@@ -63,7 +63,7 @@ Natively registered adapters:
 - **Qwen3** (`Qwen3ForCausalLM`) — Qwen 3 family
 - **Mistral** (`MistralForCausalLM`) — Mistral family
 
-- `carve_lm.vlm.language.adapters`
+- `carve_lm.vlm.components.language.adapters`
 - **Qwen2.5-VL** (`Qwen2_5_VLForConditionalGeneration`) — decoder-side pruning only when supported by the installed `transformers`.
 
 Any LLM that follows the standard HuggingFace decoder layout (`model.model.layers[*].{self_attn, mlp, input_layernorm, post_attention_layernorm}`) is automatically picked up by `GenericDecoderModelAdapter`.

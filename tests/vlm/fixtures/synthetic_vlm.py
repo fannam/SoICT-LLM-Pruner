@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from carve_lm.vlm.language.adapters import DecoderModelAdapter, get_model_adapter, register_model_adapter
+from carve_lm.vlm.components.language.adapters import DecoderModelAdapter, get_model_adapter, register_model_adapter
 from tests.fixtures.synthetic_models import SyntheticBackbone, SyntheticConfig
 
 _TEXT_FIELDS = (
