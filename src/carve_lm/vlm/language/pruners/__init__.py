@@ -1,5 +1,5 @@
 """
-Tri-level structured pruners for decoder-only LLMs.
+Tri-level structured pruners for the language decoder inside a VLM.
 
 Levels
 ------

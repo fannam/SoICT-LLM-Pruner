@@ -12,8 +12,8 @@ from .base import (
 
 class DecoderModelAdapter(BaseModelAdapter):
     """
-    Optional helper for decoder-only architectures that follow the common Hugging Face
-    layout `model.model.layers[*].{self_attn,mlp,...}`.
+    Optional helper for the language-decoder subtree in multimodal models that follow
+    the common Hugging Face layout `model.model.layers[*].{self_attn,mlp,...}`.
 
     Use this only when the target model genuinely follows this layout. Other model
     families should implement `BaseModelAdapter` directly.

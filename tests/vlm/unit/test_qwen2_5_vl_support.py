@@ -13,9 +13,9 @@ from tests.vlm.fixtures.synthetic_vlm import (
 )
 from torch.utils.data import DataLoader
 
-from carve_lm.vlm.adapters import registered_model_adapters
-from carve_lm.vlm.estimators._base import _BaseBlockPerplexityEstimator
-from carve_lm.vlm.pruners import (
+from carve_lm.vlm.language.adapters import registered_model_adapters
+from carve_lm.vlm.language.estimators._base import _BaseBlockPerplexityEstimator
+from carve_lm.vlm.language.pruners import (
     DepthLayerConfig,
     DepthLayerPruner,
     EstimatorSpec,

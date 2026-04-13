@@ -43,11 +43,13 @@ def test_llm_public_namespaces_smoke_import():
 
 
 def test_vlm_public_namespaces_smoke_import():
-    from carve_lm.vlm.adapters import BaseModelAdapter, resolve_model_adapter
     from carve_lm.vlm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
-    from carve_lm.vlm.estimators import ActivationEstimator
     from carve_lm.vlm.evaluation import VLMMeasurer
-    from carve_lm.vlm.pruners import WidthGroupConfig, WidthPruner
+    from carve_lm.vlm.language.adapters import BaseModelAdapter, resolve_model_adapter
+    from carve_lm.vlm.language.estimators import ActivationEstimator
+    from carve_lm.vlm.language.pruners import WidthGroupConfig, WidthPruner
+    from carve_lm.vlm.merger.estimators import available_estimators as available_merger_estimators
+    from carve_lm.vlm.vision.pruners import available_pruners as available_vision_pruners
 
     assert BaseModelAdapter is not None
     assert resolve_model_adapter is not None
@@ -59,6 +61,8 @@ def test_vlm_public_namespaces_smoke_import():
     assert LogitsDistiller is not None
     assert OTConfig is not None
     assert VLMMeasurer is not None
+    assert available_vision_pruners() == ()
+    assert available_merger_estimators() == ()
 
 
 def test_old_root_pruning_imports_are_removed():
@@ -69,6 +73,10 @@ def test_old_root_pruning_imports_are_removed():
         "carve_lm.estimators",
         "carve_lm.evaluation",
         "carve_lm.pruners",
+        "carve_lm.vlm.adapters",
+        "carve_lm.vlm.core",
+        "carve_lm.vlm.estimators",
+        "carve_lm.vlm.pruners",
     ):
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module(module_name)
@@ -114,6 +122,7 @@ def test_llm_factories_resolve_legacy_aliases_with_warnings():
 
     assert estimator is not None
     assert pruner is not None
+
 
 def test_llm_teacher_correction_namespace_smoke_import():
     pytest.importorskip("accelerate")

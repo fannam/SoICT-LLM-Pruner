@@ -15,13 +15,24 @@ carve_lm/
 │   └── pruners/
 │       └── structured/
 ├── vlm/
-│   ├── adapters/
-│   ├── core/
 │   ├── distillation/
-│   ├── estimators/
 │   ├── evaluation/
-│   └── pruners/
-│       └── structured/
+│   ├── language/
+│   │   ├── adapters/
+│   │   ├── core/
+│   │   ├── estimators/
+│   │   └── pruners/
+│   │       └── structured/
+│   ├── merger/
+│   │   ├── adapters/
+│   │   ├── core/
+│   │   ├── estimators/
+│   │   └── pruners/
+│   └── vision/
+│       ├── adapters/
+│       ├── core/
+│       ├── estimators/
+│       └── pruners/
 ```
 
 There are no compatibility shims for the old root packages. Consumers are expected to import directly from `carve_lm.llm.*` or `carve_lm.vlm.*`.
@@ -30,7 +41,7 @@ There are no compatibility shims for the old root packages. Consumers are expect
 
 ### Adapters
 
-`carve_lm.llm.adapters` and `carve_lm.vlm.adapters` define the model-facing contracts used by the pruning stacks. A `BaseModelAdapter` exposes:
+`carve_lm.llm.adapters` and `carve_lm.vlm.language.adapters` define the model-facing contracts used by the active pruning stacks. A `BaseModelAdapter` exposes:
 
 - decoder layers
 - attention and MLP projections
@@ -42,7 +53,7 @@ This keeps pruning logic independent from model-family-specific attribute paths.
 
 ### Registries
 
-Each domain-local core registry (`carve_lm.llm.core.registry`, `carve_lm.vlm.core.registry`) owns three extension points:
+Each domain-local core registry (`carve_lm.llm.core.registry`, `carve_lm.vlm.language.core.registry`, and the placeholder registries under `carve_lm.vlm.vision.core.registry` / `carve_lm.vlm.merger.core.registry`) owns three extension points:
 
 - `ESTIMATOR_REGISTRY`
 - `PRUNER_REGISTRY`
@@ -52,7 +63,7 @@ Classic estimators and pruners register themselves here so external code can use
 
 ### Estimators
 
-`carve_lm.llm.estimators` and `carve_lm.vlm.estimators` use a method-first taxonomy:
+`carve_lm.llm.estimators` and `carve_lm.vlm.language.estimators` use a method-first taxonomy:
 
 - `activation.element`
 - `magnitude.element`
@@ -75,7 +86,7 @@ The weight-magnitude estimator is data free. Its group scores are structured sum
 
 ### Pruners
 
-`carve_lm.llm.pruners` and `carve_lm.vlm.pruners` use an effect-first taxonomy:
+`carve_lm.llm.pruners` and `carve_lm.vlm.language.pruners` use an effect-first taxonomy:
 
 - `width`
 - `width.group`
@@ -107,7 +118,13 @@ Structured block-wise discovery creates only two group families:
 - attention groups anchored on `q_proj`
 - MLP groups anchored on `gate_proj`
 
-Structured persistence is manifest-based. LLM pruners store `llm_pruner_manifest.json`; VLM pruners store `vlm_pruner_manifest.json`. `load_pruned()` reconstructs the dense base architecture before replaying the structural rewrite. Manifest v2 records canonical pruner names, adapter metadata, and config payloads.
+Structured persistence is manifest-based. LLM pruners store `llm_pruner_manifest.json`; VLM language-component pruners store `vlm_pruner_manifest.json`. `load_pruned()` reconstructs the dense base architecture before replaying the structural rewrite. Manifest v2 records canonical pruner names, adapter metadata, and config payloads.
+
+The VLM namespace is now component-scoped:
+
+- `carve_lm.vlm.language.*`: active decoder/text pruning stack
+- `carve_lm.vlm.vision.*`: reserved for future vision-specific estimators and pruners
+- `carve_lm.vlm.merger.*`: reserved for future merger-specific estimators and pruners
 
 ### Distillation And Recovery
 

@@ -3,11 +3,10 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
-    "distillation",
-    "evaluation",
-    "language",
-    "merger",
-    "vision",
+    "adapters",
+    "core",
+    "estimators",
+    "pruners",
 ]
 
 

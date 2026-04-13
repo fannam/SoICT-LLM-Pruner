@@ -1,5 +1,5 @@
 """
-Tri-level importance estimators for structured LLM pruning.
+Tri-level importance estimators for structured pruning of a VLM language decoder.
 
 Levels
 ------
