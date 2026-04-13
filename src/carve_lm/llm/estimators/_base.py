@@ -931,7 +931,7 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
             progress_bar = tqdm(
                 dataloader,
                 total=_dataloader_total(dataloader, batches_to_process),
-                desc="Calculating PPL for block",
+                desc="Calculating PPL",
                 leave=False,
             )
             for batch_idx, batch in enumerate(progress_bar):
@@ -1015,3 +1015,126 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
             )
 
         return block_importances
+
+
+class _BaseLayerPerplexityEstimator(_BaseBlockPerplexityEstimator):
+    """
+    Estimate attention/MLP sublayer importance from perplexity deltas.
+
+    Each candidate attention or MLP sublayer is temporarily replaced with an
+    identity module, and the resulting perplexity increase is used as its
+    importance score.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        tokenizer: Any,
+        device: str = "cpu",
+        model_adapter: BaseModelAdapter | str | None = None,
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            block_size=1,
+            device=device,
+            model_adapter=model_adapter,
+        )
+
+    @staticmethod
+    def _score_perplexity(
+        current_perplexity: float,
+        baseline_perplexity: float,
+        importance_metric: str,
+    ) -> float:
+        if importance_metric == "perplexity_increase":
+            return current_perplexity - baseline_perplexity
+        if importance_metric == "perplexity_ratio":
+            if baseline_perplexity > 0 and not math.isinf(baseline_perplexity):
+                return current_perplexity / baseline_perplexity
+            return float("inf")
+        raise ValueError("Unknown importance_metric: {}".format(importance_metric))
+
+    def estimate(
+        self,
+        dataloader: DataLoader,
+        n_samples: int = 1024,
+        importance_metric: str = "perplexity_increase",
+    ) -> Dict[str, List[float]]:
+        if self.tokenizer is None:
+            raise ValueError("Tokenizer must be provided for perplexity-based estimation.")
+
+        self.model.eval()
+        self.model.to(self.device)
+
+        print("Calculating baseline perplexity (layer removal) using {} samples...".format(n_samples))
+        baseline_perplexity = self._calculate_perplexity(self.model, dataloader, n_samples)
+        print("Baseline Perplexity for layer estimation: {:.4f}".format(baseline_perplexity))
+
+        attention_importances = []
+        mlp_importances = []
+        layers = self.adapter.get_layers(self.model)
+
+        for layer_idx in tqdm(range(self.num_layers), desc="Estimating Layer Importance (PPL)"):
+            layer = layers[layer_idx]
+
+            original_attention = self.adapter.get_attention_module(layer)
+            try:
+                self.adapter.set_attention_module(
+                    layer,
+                    self.adapter.make_identity_attention().to(self.device),
+                )
+                current_attention_perplexity = self._calculate_perplexity(
+                    self.model,
+                    dataloader,
+                    n_samples,
+                )
+            finally:
+                self.adapter.set_attention_module(layer, original_attention)
+
+            attention_score = self._score_perplexity(
+                current_attention_perplexity,
+                baseline_perplexity,
+                importance_metric,
+            )
+            attention_importances.append(attention_score)
+            tqdm.write(
+                "Attention layer {}: PPL={:.2f}, Score={:.2f}".format(
+                    layer_idx,
+                    current_attention_perplexity,
+                    attention_score,
+                )
+            )
+
+            original_mlp = self.adapter.get_mlp_module(layer)
+            try:
+                self.adapter.set_mlp_module(
+                    layer,
+                    self.adapter.make_identity_mlp().to(self.device),
+                )
+                current_mlp_perplexity = self._calculate_perplexity(
+                    self.model,
+                    dataloader,
+                    n_samples,
+                )
+            finally:
+                self.adapter.set_mlp_module(layer, original_mlp)
+
+            mlp_score = self._score_perplexity(
+                current_mlp_perplexity,
+                baseline_perplexity,
+                importance_metric,
+            )
+            mlp_importances.append(mlp_score)
+            tqdm.write(
+                "MLP layer {}: PPL={:.2f}, Score={:.2f}".format(
+                    layer_idx,
+                    current_mlp_perplexity,
+                    mlp_score,
+                )
+            )
+
+        return {
+            "attention": attention_importances,
+            "mlp": mlp_importances,
+        }

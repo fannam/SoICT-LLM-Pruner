@@ -20,6 +20,7 @@ def test_root_namespace_is_minimal_and_lazy():
 def test_llm_public_namespaces_smoke_import():
     from carve_lm import __version__
     from carve_lm.llm.adapters import BaseModelAdapter
+    from carve_lm.llm.auto_model import PrunedAutoModelForCausalLM
     from carve_lm.llm.core import ESTIMATOR_REGISTRY
     from carve_lm.llm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
     from carve_lm.llm.estimators import ActivationEstimator, create_estimator
@@ -29,6 +30,7 @@ def test_llm_public_namespaces_smoke_import():
 
     assert __version__
     assert BaseModelAdapter is not None
+    assert PrunedAutoModelForCausalLM is not None
     assert ESTIMATOR_REGISTRY is not None
     assert create_estimator is not None
     assert ActivationEstimator is not None
@@ -95,6 +97,7 @@ def test_llm_canonical_registry_names_are_listed_by_default():
         "magnitude.element",
         "magnitude.group",
         "perplexity.block",
+        "perplexity.layer",
         "random.group",
         "similarity.block",
         "similarity.layer",

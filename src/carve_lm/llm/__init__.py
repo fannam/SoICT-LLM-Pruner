@@ -4,6 +4,7 @@ from importlib import import_module
 
 __all__ = [
     "adapters",
+    "auto_model",
     "core",
     "distillation",
     "estimators",

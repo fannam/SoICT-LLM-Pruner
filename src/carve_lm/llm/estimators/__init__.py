@@ -42,9 +42,14 @@ from .element import (
     WeightMagnitudeElementEstimator,
 )
 from .layer import (
+    LayerPerplexityEstimator,
     LayerSimilarityEstimator,
+    Llama3LayerPerplexityEstimator,
     Llama3SimilarityLayerEstimator,
+    MistralLayerPerplexityEstimator,
     MistralSimilarityLayerEstimator,
+    PerplexityLayerEstimator,
+    Qwen2LayerPerplexityEstimator,
     Qwen2SimilarityLayerEstimator,
     SimilarityLayerEstimator,
 )
@@ -106,6 +111,7 @@ __all__ = [
     "TaylorGroupEstimator",
     "RandomGroupEstimator",
     # Level 2 – layer
+    "LayerPerplexityEstimator",
     "LayerSimilarityEstimator",
     # Level 3 – block
     "BlockSimilarityEstimator",
@@ -115,6 +121,7 @@ __all__ = [
     # Backward-compat aliases
     "ActivationElementEstimator",
     "WeightMagnitudeElementEstimator",
+    "PerplexityLayerEstimator",
     "SimilarityLayerEstimator",
     "SimilarityBlockEstimator",
     "BlockPerplexityEstimator",
@@ -124,6 +131,9 @@ __all__ = [
     "Llama3WeightMagnitudeEstimator",
     "Qwen2WeightMagnitudeEstimator",
     "MistralWeightMagnitudeEstimator",
+    "Llama3LayerPerplexityEstimator",
+    "Qwen2LayerPerplexityEstimator",
+    "MistralLayerPerplexityEstimator",
     "Llama3SimilarityLayerEstimator",
     "Qwen2SimilarityLayerEstimator",
     "MistralSimilarityLayerEstimator",

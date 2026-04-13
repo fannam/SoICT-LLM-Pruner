@@ -3,12 +3,14 @@ from __future__ import annotations
 import time
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
+
+from ..auto_model import PrunedAutoModelForCausalLM
 
 
 class LLMMeasurer:
     """
-    A class to measure latency and throughput of a Hugging Face AutoModelForCausalLM.
+    Measure latency and throughput for regular or component-pruned causal LMs.
     """
 
     def __init__(self, model_name_or_path: str, device: str = None):
@@ -27,7 +29,7 @@ class LLMMeasurer:
 
         print(f"Using device: {self.device}")
 
-        self.model = AutoModelForCausalLM.from_pretrained(model_name_or_path).to(self.device)
+        self.model = PrunedAutoModelForCausalLM.from_pretrained(model_name_or_path).to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
 
         if self.tokenizer.pad_token is None:
