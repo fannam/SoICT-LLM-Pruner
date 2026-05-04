@@ -40,8 +40,14 @@ class BaseMergerAdapter:
     def get_merger(self, model: nn.Module) -> nn.Module:
         return model.model.visual.merger
 
+    def get_mergers(self, model: nn.Module) -> tuple[nn.Module, ...]:
+        return (self.get_merger(model),)
+
     def get_ln_q(self, merger: nn.Module) -> nn.Module:
         return merger.ln_q
+
+    def set_ln_q(self, merger: nn.Module, norm: nn.Module) -> None:
+        merger.ln_q = norm
 
     def get_mlp(self, merger: nn.Module) -> nn.Sequential:
         return merger.mlp
@@ -95,6 +101,22 @@ class BaseMergerAdapter:
         if weight is None:
             return 0
         return int(weight.numel())
+
+    def input_norm_width(self, merger: nn.Module) -> int:
+        return self.input_hidden_size_from_ln_q(merger)
+
+    def input_channel_indices(
+        self,
+        model: nn.Module,
+        merger: nn.Module,
+        channel_idx: int,
+    ) -> list[int]:
+        input_hidden_size = self.input_hidden_size(model, merger)
+        merge_factor = self.merge_factor(model, merger)
+        return [
+            channel_idx + merge_idx * input_hidden_size
+            for merge_idx in range(merge_factor)
+        ]
 
     def output_hidden_size(self, model: nn.Module, merger: nn.Module | None = None) -> int:
         if merger is None:

@@ -56,7 +56,15 @@ class VLMDistillationCollator(DistillationCollator):
                 batch["labels"] = labels
             return batch
 
-        return super().__call__(samples)
+        batch = super().__call__(samples)
+        if isinstance(samples[0], Mapping):
+            handled = {self.text_field, *batch.keys()}
+            keys = set().union(*(sample.keys() for sample in samples))
+            for key in sorted(keys - handled):
+                values = [sample[key] for sample in samples if key in sample]
+                if len(values) == len(samples):
+                    batch[key] = _stack_or_keep(values)
+        return batch
 
     def _can_use_processor(self, samples: list[Any]) -> bool:
         if not isinstance(samples[0], Mapping):

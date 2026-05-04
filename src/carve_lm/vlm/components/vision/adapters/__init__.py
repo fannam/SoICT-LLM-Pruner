@@ -62,6 +62,16 @@ def resolve_model_adapter(model, adapter=None):
 
 
 try:
+    Qwen3VLVisionAdapter = getattr(
+        importlib.import_module(".models.qwen3_vl", __name__),
+        "Qwen3VLVisionAdapter",
+    )
+    register_model_adapter(Qwen3VLVisionAdapter())
+    __all__.append("Qwen3VLVisionAdapter")
+except (ImportError, AttributeError, KeyError):
+    Qwen3VLVisionAdapter = None
+
+try:
     Qwen2_5_VLVisionAdapter = getattr(
         importlib.import_module(".models.qwen2_5_vl", __name__),
         "Qwen2_5_VLVisionAdapter",

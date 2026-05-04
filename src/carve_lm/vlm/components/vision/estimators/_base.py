@@ -106,7 +106,7 @@ class _BaseVisionActivationEstimator(_BaseVisionEstimator):
             return hook
 
         for block_idx, block in enumerate(self.adapter.get_blocks(self.model)):
-            down_proj = self.adapter.get_mlp_projections(block).down_proj
+            _, down_proj = self.adapter.get_mlp_output_projection(block)
             importance_by_block[block_idx] = _ActivationAccumulator(
                 down_proj.in_features,
                 agg,
@@ -251,18 +251,25 @@ class _BaseVisionMagnitudeEstimator(_BaseVisionEstimator):
         with torch.no_grad():
             for block_idx, block in enumerate(self.adapter.get_blocks(self.model)):
                 mlp = self.adapter.get_mlp_projections(block)
-                gate_norm = self._calculate_norm(mlp.gate_proj.weight.detach().to(self.device), agg, dim=1)
-                up_norm = self._calculate_norm(mlp.up_proj.weight.detach().to(self.device), agg, dim=1)
-                down_norm = self._calculate_norm(mlp.down_proj.weight.detach().to(self.device), agg, dim=0)
-                if mlp.gate_proj.bias is not None:
-                    gate_norm = gate_norm + self._scalar_slice_importance(
-                        mlp.gate_proj.bias.detach().to(self.device)
+                input_norm = None
+                for _, projection in mlp.input_projections():
+                    projection_norm = self._calculate_norm(
+                        projection.weight.detach().to(self.device),
+                        agg,
+                        dim=1,
                     )
-                if mlp.up_proj.bias is not None:
-                    up_norm = up_norm + self._scalar_slice_importance(
-                        mlp.up_proj.bias.detach().to(self.device)
-                    )
-                importance_by_block[block_idx] = (gate_norm + up_norm + down_norm).cpu()
+                    if projection.bias is not None:
+                        projection_norm = projection_norm + self._scalar_slice_importance(
+                            projection.bias.detach().to(self.device)
+                        )
+                    input_norm = projection_norm if input_norm is None else input_norm + projection_norm
+                _, output_projection = mlp.output_projection()
+                output_norm = self._calculate_norm(
+                    output_projection.weight.detach().to(self.device),
+                    agg,
+                    dim=0,
+                )
+                importance_by_block[block_idx] = (input_norm + output_norm).cpu()
         return importance_by_block
 
     def estimate_hidden_channels(self, agg: str = "l2") -> Dict[str, torch.Tensor]:
@@ -285,11 +292,14 @@ class _BaseVisionMagnitudeEstimator(_BaseVisionEstimator):
                     importance.add_(self._scalar_slice_importance(attention.proj.bias.detach().to(self.device)))
 
                 mlp = self.adapter.get_mlp_projections(block)
-                importance.add_(self._calculate_norm(mlp.gate_proj.weight.detach().to(self.device), agg, dim=0))
-                importance.add_(self._calculate_norm(mlp.up_proj.weight.detach().to(self.device), agg, dim=0))
-                importance.add_(self._calculate_norm(mlp.down_proj.weight.detach().to(self.device), agg, dim=1))
-                if mlp.down_proj.bias is not None:
-                    importance.add_(self._scalar_slice_importance(mlp.down_proj.bias.detach().to(self.device)))
+                for _, projection in mlp.input_projections():
+                    importance.add_(self._calculate_norm(projection.weight.detach().to(self.device), agg, dim=0))
+                _, output_projection = mlp.output_projection()
+                importance.add_(
+                    self._calculate_norm(output_projection.weight.detach().to(self.device), agg, dim=1)
+                )
+                if output_projection.bias is not None:
+                    importance.add_(self._scalar_slice_importance(output_projection.bias.detach().to(self.device)))
 
                 importance_by_key["vision_block{}_hidden_channels".format(block_idx)] = importance.cpu()
         return importance_by_key

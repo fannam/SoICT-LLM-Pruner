@@ -240,13 +240,13 @@ class BridgeChannelPruner:
         return tensor
 
     def _slice_merger_output(self, model, selected_residual_indices: list[int]) -> None:
-        merger = self.adapter.get_merger(model)
-        fc2 = self.adapter.get_projections(merger).fc2
-        self.adapter.set_projection(
-            merger,
-            "fc2",
-            slice_linear(fc2, out_indices=list(selected_residual_indices), in_indices=None),
-        )
+        for merger in self.adapter.get_mergers(model):
+            fc2 = self.adapter.get_projections(merger).fc2
+            self.adapter.set_projection(
+                merger,
+                "fc2",
+                slice_linear(fc2, out_indices=list(selected_residual_indices), in_indices=None),
+            )
         self.adapter.patch_output_hidden_size(model, len(selected_residual_indices))
 
 

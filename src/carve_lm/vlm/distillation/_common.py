@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from typing import Any
 
@@ -38,6 +39,47 @@ def move_batch_to_device(batch: Mapping[str, Any], device: torch.device | str) -
         key: value.to(target) if torch.is_tensor(value) else value
         for key, value in batch.items()
     }
+
+
+def text_config(model_or_config) -> Any:
+    config = getattr(model_or_config, "config", model_or_config)
+    return getattr(config, "text_config", None) or config
+
+
+def text_hidden_size(model_or_config) -> int:
+    config = text_config(model_or_config)
+    try:
+        return int(config.hidden_size)
+    except AttributeError as exc:
+        raise AttributeError("Unable to resolve text hidden_size from model config.") from exc
+
+
+def text_num_hidden_layers(model_or_config) -> int:
+    config = text_config(model_or_config)
+    try:
+        return int(config.num_hidden_layers)
+    except AttributeError as exc:
+        raise AttributeError("Unable to resolve text num_hidden_layers from model config.") from exc
+
+
+def filter_model_inputs(model, batch: Mapping[str, Any]) -> dict[str, Any]:
+    forward = getattr(model, "forward", model)
+    try:
+        parameters = inspect.signature(forward).parameters
+    except (TypeError, ValueError):
+        return {key: value for key, value in batch.items() if key != "token_type_ids"}
+    accepts_kwargs = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    allowed_keys = set(parameters)
+    filtered = {}
+    for key, value in batch.items():
+        if key == "token_type_ids" and key not in allowed_keys:
+            continue
+        if accepts_kwargs or key in allowed_keys:
+            filtered[key] = value
+    return filtered
 
 
 def prepare_causal_lm_batch(

@@ -61,6 +61,16 @@ def resolve_model_adapter(model, adapter=None):
 
 
 try:
+    Qwen3VLMergerAdapter = getattr(
+        importlib.import_module(".models.qwen3_vl", __name__),
+        "Qwen3VLMergerAdapter",
+    )
+    register_model_adapter(Qwen3VLMergerAdapter())
+    __all__.append("Qwen3VLMergerAdapter")
+except (ImportError, AttributeError, KeyError):
+    Qwen3VLMergerAdapter = None
+
+try:
     Qwen2_5_VLMergerAdapter = getattr(
         importlib.import_module(".models.qwen2_5_vl", __name__),
         "Qwen2_5_VLMergerAdapter",

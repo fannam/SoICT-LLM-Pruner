@@ -117,7 +117,7 @@ class WidthPruner:
         if len(blocks) == 0:
             raise ValueError("Model does not contain any visual blocks.")
 
-        original_intermediate = self.adapter.get_mlp_projections(blocks[0]).down_proj.in_features
+        original_intermediate = self.adapter.get_mlp_intermediate_size(blocks[0])
         if target_num_neurons >= original_intermediate:
             raise ValueError("target_num_neurons must be smaller than the original intermediate size.")
 
@@ -128,20 +128,17 @@ class WidthPruner:
             scores = neuron_importance[block_idx]
             keep_neurons = sorted_topk_indices(scores, target_num_neurons, device=self.device)
             mlp = self.adapter.get_mlp_projections(block)
+            for projection_name, projection in mlp.input_projections():
+                self.adapter.set_mlp_projection(
+                    block,
+                    projection_name,
+                    slice_linear(projection, out_indices=keep_neurons, in_indices=None),
+                )
+            output_name, output_projection = mlp.output_projection()
             self.adapter.set_mlp_projection(
                 block,
-                "gate_proj",
-                slice_linear(mlp.gate_proj, out_indices=keep_neurons, in_indices=None),
-            )
-            self.adapter.set_mlp_projection(
-                block,
-                "up_proj",
-                slice_linear(mlp.up_proj, out_indices=keep_neurons, in_indices=None),
-            )
-            self.adapter.set_mlp_projection(
-                block,
-                "down_proj",
-                slice_linear(mlp.down_proj, out_indices=None, in_indices=keep_neurons),
+                output_name,
+                slice_linear(output_projection, out_indices=None, in_indices=keep_neurons),
             )
 
         self.adapter.patch_intermediate_size(pruned_model, target_num_neurons)
@@ -242,20 +239,17 @@ class WidthPruner:
             )
 
             mlp = self.adapter.get_mlp_projections(block)
+            for projection_name, projection in mlp.input_projections():
+                self.adapter.set_mlp_projection(
+                    block,
+                    projection_name,
+                    slice_linear(projection, out_indices=None, in_indices=residual_indices),
+                )
+            output_name, output_projection = mlp.output_projection()
             self.adapter.set_mlp_projection(
                 block,
-                "gate_proj",
-                slice_linear(mlp.gate_proj, out_indices=None, in_indices=residual_indices),
-            )
-            self.adapter.set_mlp_projection(
-                block,
-                "up_proj",
-                slice_linear(mlp.up_proj, out_indices=None, in_indices=residual_indices),
-            )
-            self.adapter.set_mlp_projection(
-                block,
-                "down_proj",
-                slice_linear(mlp.down_proj, out_indices=residual_indices, in_indices=None),
+                output_name,
+                slice_linear(output_projection, out_indices=residual_indices, in_indices=None),
             )
 
         self._slice_merger_input_boundary(pruned_model, residual_indices, old_hidden_size)
@@ -281,23 +275,35 @@ class WidthPruner:
         except Exception:
             return
 
-        merger = merger_adapter.get_merger(model)
-        ln_q = merger_adapter.get_ln_q(merger)
-        if ln_q is not None:
-            merger.ln_q = slice_norm(ln_q, residual_indices)
+        for merger in merger_adapter.get_mergers(model):
+            ln_q = merger_adapter.get_ln_q(merger)
+            if ln_q is not None:
+                norm_width = merger_adapter.input_norm_width(merger)
+                if norm_width == old_hidden_size:
+                    norm_indices = residual_indices
+                else:
+                    merge_factor = merger_adapter.merge_factor(model, merger)
+                    norm_indices = [
+                        merge_idx * old_hidden_size + index
+                        for merge_idx in range(merge_factor)
+                        for index in residual_indices
+                    ]
+                merger_adapter.set_ln_q(merger, slice_norm(ln_q, norm_indices))
 
-        projections = merger_adapter.get_projections(merger)
-        merge_factor = merger_adapter.merge_factor(model, merger)
-        grouped_input_indices = [
-            merge_idx * old_hidden_size + index
-            for merge_idx in range(merge_factor)
-            for index in residual_indices
-        ]
-        merger_adapter.set_projection(
-            merger,
-            "fc1",
-            slice_linear(projections.fc1, out_indices=None, in_indices=grouped_input_indices),
-        )
+            projections = merger_adapter.get_projections(merger)
+            merge_factor = merger_adapter.merge_factor(model, merger)
+            if hasattr(merger, "hidden_size"):
+                merger.hidden_size = len(residual_indices) * merge_factor
+            grouped_input_indices = [
+                merge_idx * old_hidden_size + index
+                for merge_idx in range(merge_factor)
+                for index in residual_indices
+            ]
+            merger_adapter.set_projection(
+                merger,
+                "fc1",
+                slice_linear(projections.fc1, out_indices=None, in_indices=grouped_input_indices),
+            )
 
     @staticmethod
     def _residual_indices(
@@ -443,6 +449,7 @@ class WidthChannelPruner(WidthPruner):
                 block = blocks[block_idx]
                 attention = self.adapter.get_attention_projections(block)
                 mlp = self.adapter.get_mlp_projections(block)
+                output_name, output_projection = mlp.output_projection()
                 qkv_out_indices = [
                     offset + index
                     for offset in (0, first.hidden_size, 2 * first.hidden_size)
@@ -492,27 +499,25 @@ class WidthChannelPruner(WidthPruner):
                             indices=tuple(residual_indices),
                             role="proj_in",
                         ),
+                    )
+                )
+                for projection_name, projection in mlp.input_projections():
+                    dependent_slices.append(
                         SliceSpec(
-                            module_path=self.adapter.module_path(self.model, mlp.gate_proj),
+                            module_path=self.adapter.module_path(self.model, projection),
                             param_name="weight",
                             axis=1,
                             indices=tuple(residual_indices),
-                            role="gate_proj_in",
-                        ),
-                        SliceSpec(
-                            module_path=self.adapter.module_path(self.model, mlp.up_proj),
-                            param_name="weight",
-                            axis=1,
-                            indices=tuple(residual_indices),
-                            role="up_proj_in",
-                        ),
-                        SliceSpec(
-                            module_path=self.adapter.module_path(self.model, mlp.down_proj),
-                            param_name="weight",
-                            axis=0,
-                            indices=tuple(residual_indices),
-                            role="down_proj_out",
-                        ),
+                            role="{}_in".format(projection_name),
+                        )
+                    )
+                dependent_slices.append(
+                    SliceSpec(
+                        module_path=self.adapter.module_path(self.model, output_projection),
+                        param_name="weight",
+                        axis=0,
+                        indices=tuple(residual_indices),
+                        role="{}_out".format(output_name),
                     )
                 )
 
@@ -689,7 +694,6 @@ class WidthChannelPruner(WidthPruner):
 def _build_layer_metadata(model, adapter: BaseVisionAdapter, block_idx: int) -> LayerMetadata:
     block = adapter.get_blocks(model)[block_idx]
     attention = adapter.get_attention_projections(block)
-    mlp = adapter.get_mlp_projections(block)
     num_heads = adapter.num_attention_heads(model, block)
     head_dim = adapter.head_dim(model, block)
     return LayerMetadata(
@@ -697,7 +701,7 @@ def _build_layer_metadata(model, adapter: BaseVisionAdapter, block_idx: int) -> 
         num_attention_heads=num_heads,
         num_key_value_heads=num_heads,
         head_dim=head_dim,
-        intermediate_size=mlp.down_proj.in_features,
+        intermediate_size=adapter.get_mlp_intermediate_size(block),
         hidden_size=attention.proj.out_features,
     )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from ._common import (
+    filter_model_inputs,
     get_output_attr,
     masked_feature_loss,
     masked_logits_loss,
@@ -15,6 +16,8 @@ from ._common import (
     prepare_causal_lm_batch,
     resolve_device,
     sync_scheduler_added_param_group_lrs,
+    text_hidden_size,
+    text_num_hidden_layers,
     zero_grad,
 )
 from .wrappers import DistilModel
@@ -71,14 +74,15 @@ class HybridDistiller:
         return history
 
     def _resolve_teacher_kept_layers(self, block_layers_to_prune):
-        total_layers = self.teacher_model.config.num_hidden_layers
+        total_layers = text_num_hidden_layers(self.teacher_model)
         prune = block_layers_to_prune
         if prune is None:
             prune = getattr(self.student_model.config, "block_layers_to_prune", None)
         teacher_kept = [idx for idx in range(total_layers) if idx not in set(prune or [])]
-        if self.student_model.config.num_hidden_layers != len(teacher_kept):
+        student_layers = text_num_hidden_layers(self.student_model)
+        if student_layers != len(teacher_kept):
             raise ValueError(
-                f"Student has {self.student_model.config.num_hidden_layers} layers, expected {len(teacher_kept)}."
+                f"Student has {student_layers} layers, expected {len(teacher_kept)}."
             )
         return teacher_kept
 
@@ -86,8 +90,8 @@ class HybridDistiller:
         teacher_kept = self._resolve_teacher_kept_layers(block_layers_to_prune)
         rebuild = self.distill_model is None or self.teacher_kept_layers != teacher_kept
         if rebuild:
-            student_dim = self.student_model.config.hidden_size
-            teacher_dim = self.teacher_model.config.hidden_size
+            student_dim = text_hidden_size(self.student_model)
+            teacher_dim = text_hidden_size(self.teacher_model)
             self.distill_model = DistilModel(
                 self.student_model,
                 student_dim,
@@ -134,11 +138,13 @@ class HybridDistiller:
         teacher_batch = move_batch_to_device(batch, device_teacher)
         teacher_batch["output_hidden_states"] = True
         teacher_batch["use_cache"] = False
+        teacher_batch = filter_model_inputs(self.teacher_model, teacher_batch)
         return self.teacher_model(**teacher_batch)
 
     def _forward_student(self, distill_model, batch):
         student_batch = dict(batch)
         student_batch["use_cache"] = False
+        student_batch = filter_model_inputs(self.student_model, student_batch)
         return distill_model(**student_batch)
 
     def _extract_hidden_states(self, outputs, model_name: str):

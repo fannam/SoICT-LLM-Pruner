@@ -16,9 +16,32 @@ class VisionAttentionProjectionBundle:
 
 @dataclass(frozen=True)
 class VisionMLPProjectionBundle:
-    gate_proj: nn.Linear
-    up_proj: nn.Linear
-    down_proj: nn.Linear
+    gate_proj: nn.Linear | None = None
+    up_proj: nn.Linear | None = None
+    down_proj: nn.Linear | None = None
+    linear_fc1: nn.Linear | None = None
+    linear_fc2: nn.Linear | None = None
+
+    def input_projections(self) -> tuple[tuple[str, nn.Linear], ...]:
+        projections = []
+        if self.gate_proj is not None:
+            projections.append(("gate_proj", self.gate_proj))
+        if self.up_proj is not None:
+            projections.append(("up_proj", self.up_proj))
+        if not projections and self.linear_fc1 is not None:
+            projections.append(("linear_fc1", self.linear_fc1))
+        return tuple(projections)
+
+    def output_projection(self) -> tuple[str, nn.Linear]:
+        if self.down_proj is not None:
+            return "down_proj", self.down_proj
+        if self.linear_fc2 is not None:
+            return "linear_fc2", self.linear_fc2
+        raise AttributeError("Vision MLP bundle does not expose an output projection.")
+
+    @property
+    def intermediate_size(self) -> int:
+        return int(self.output_projection()[1].in_features)
 
 
 class BaseVisionAdapter:
@@ -95,6 +118,18 @@ class BaseVisionAdapter:
             up_proj=mlp.up_proj,
             down_proj=mlp.down_proj,
         )
+
+    def get_mlp_input_projections(self, block: nn.Module) -> tuple[tuple[str, nn.Linear], ...]:
+        projections = self.get_mlp_projections(block).input_projections()
+        if not projections:
+            raise AttributeError("Vision MLP does not expose input projections.")
+        return projections
+
+    def get_mlp_output_projection(self, block: nn.Module) -> tuple[str, nn.Linear]:
+        return self.get_mlp_projections(block).output_projection()
+
+    def get_mlp_intermediate_size(self, block: nn.Module) -> int:
+        return self.get_mlp_projections(block).intermediate_size
 
     def set_attention_projection(
         self,
@@ -191,33 +226,26 @@ class BaseVisionAdapter:
 
     def patch_hidden_size(self, model: nn.Module, hidden_size: int) -> None:
         self.ensure_supported(model)
-        vision_config = getattr(getattr(model, "config", None), "vision_config", None)
-        if vision_config is not None and hasattr(vision_config, "hidden_size"):
-            vision_config.hidden_size = int(hidden_size)
+        self.patch_vision_config(model, "hidden_size", hidden_size)
 
     def patch_num_attention_heads(self, model: nn.Module, num_heads: int) -> None:
         self.ensure_supported(model)
-        vision_config = getattr(getattr(model, "config", None), "vision_config", None)
-        if vision_config is not None:
-            if hasattr(vision_config, "num_heads"):
-                vision_config.num_heads = int(num_heads)
-            if hasattr(vision_config, "num_attention_heads"):
-                vision_config.num_attention_heads = int(num_heads)
+        self.patch_vision_config(model, "num_heads", num_heads)
+        self.patch_vision_config(model, "num_attention_heads", num_heads)
 
     def patch_intermediate_size(self, model: nn.Module, intermediate_size: int) -> None:
         self.ensure_supported(model)
-        vision_config = getattr(getattr(model, "config", None), "vision_config", None)
-        if vision_config is not None and hasattr(vision_config, "intermediate_size"):
-            vision_config.intermediate_size = int(intermediate_size)
+        self.patch_vision_config(model, "intermediate_size", intermediate_size)
 
     def patch_num_hidden_layers(self, model: nn.Module, num_hidden_layers: int) -> None:
         self.ensure_supported(model)
+        self.patch_vision_config(model, "depth", num_hidden_layers)
+        self.patch_vision_config(model, "num_hidden_layers", num_hidden_layers)
+
+    def patch_vision_config(self, model: nn.Module, attr: str, value: int) -> None:
         vision_config = getattr(getattr(model, "config", None), "vision_config", None)
-        if vision_config is not None:
-            if hasattr(vision_config, "depth"):
-                vision_config.depth = int(num_hidden_layers)
-            if hasattr(vision_config, "num_hidden_layers"):
-                vision_config.num_hidden_layers = int(num_hidden_layers)
+        if vision_config is not None and hasattr(vision_config, attr):
+            setattr(vision_config, attr, int(value))
 
     def metadata(self, model: nn.Module) -> dict[str, Any]:
         block = self.get_blocks(model)[0]

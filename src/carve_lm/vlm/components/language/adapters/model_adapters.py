@@ -3,6 +3,7 @@ Backward-compatibility shim. Import directly from the sub-modules instead:
   - base.py       – dataclasses, BaseModelAdapter, utilities
   - decoder.py    – DecoderModelAdapter, GenericDecoderModelAdapter
   - models/qwen2_5_vl.py – Qwen2_5_VLModelAdapter
+  - models/qwen3_vl.py – Qwen3VLModelAdapter
   - registry.py   – register_model_adapter, get_model_adapter, resolve_model_adapter, …
 """
 from __future__ import annotations
@@ -29,6 +30,15 @@ from .registry import (
 )
 
 Qwen2_5_VLModelAdapter = None
+Qwen3VLModelAdapter = None
+try:
+    Qwen3VLModelAdapter = getattr(
+        importlib.import_module(".models.qwen3_vl", __name__.rsplit(".", 1)[0]),
+        "Qwen3VLModelAdapter",
+    )
+except (ImportError, AttributeError):
+    pass
+
 try:
     Qwen2_5_VLModelAdapter = getattr(
         importlib.import_module(".models.qwen2_5_vl", __name__.rsplit(".", 1)[0]),
@@ -57,3 +67,5 @@ __all__ = [
 
 if Qwen2_5_VLModelAdapter is not None:
     __all__.append("Qwen2_5_VLModelAdapter")
+if Qwen3VLModelAdapter is not None:
+    __all__.append("Qwen3VLModelAdapter")

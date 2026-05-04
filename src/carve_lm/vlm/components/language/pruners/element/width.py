@@ -56,14 +56,6 @@ class WidthPruner(_BasePruner):
         super().__init__(model=original_model, device=device, model_adapter=model_adapter)
         self.model = original_model
         self.original_config = original_model.config
-        self.original_num_key_value_heads = getattr(
-            self.original_config,
-            "num_key_value_heads",
-            self.original_config.num_attention_heads,
-        )
-        self.original_num_attention_heads = self.original_config.num_attention_heads
-        self.original_num_layers = self.original_config.num_hidden_layers
-        self.original_hidden_size = self.original_config.hidden_size
         self.dtype = getattr(self.model, "dtype", None)
 
         layers = self.adapter.get_layers(self.model)
@@ -71,18 +63,13 @@ class WidthPruner(_BasePruner):
             raise ValueError("Model does not contain any decoder layers.")
 
         first_layer = layers[0]
+        attention = self.adapter.get_attention_handles(self.model, first_layer)
+        self.original_num_key_value_heads = attention.num_key_value_heads
+        self.original_num_attention_heads = attention.num_heads
+        self.original_num_layers = len(layers)
+        self.original_hidden_size = self.adapter.hidden_size(self.model)
         self.original_intermediate_size = self.adapter.get_mlp_projections(first_layer).gate_proj.out_features
-        self.head_dim = getattr(self.original_config, "head_dim", None)
-        if self.head_dim is None:
-            q_proj = self.adapter.get_attention_projections(first_layer).q_proj
-            if q_proj.out_features % self.original_num_attention_heads != 0:
-                raise ValueError(
-                    "q_proj.out_features ({}) must be divisible by num_attention_heads ({}).".format(
-                        q_proj.out_features,
-                        self.original_num_attention_heads,
-                    )
-                )
-            self.head_dim = q_proj.out_features // self.original_num_attention_heads
+        self.head_dim = attention.head_dim
 
     @staticmethod
     def _warn_and_abort(message: str):
@@ -588,7 +575,8 @@ class EmbeddingChannelPruningStrategy(BaseElementPruningStrategy):
 
         new_config = pruner._clone_config()
         pruner.adapter.set_hidden_size(new_config, target_embedding_size)
-        pruner.adapter.set_head_dim(new_config, pruner.head_dim)
+        if not pruner.adapter.uses_hidden_stream_channel_pruning(pruner.model):
+            pruner.adapter.set_head_dim(new_config, pruner.head_dim)
         new_model = pruner._load_matching_state(pruner._instantiate_model(new_config))
 
         keep_indices = pruner._sorted_topk_indices(

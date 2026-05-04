@@ -167,6 +167,17 @@ def discover_channelwise(model, adapter: BaseModelAdapter, example_batch=None) -
     final_norm = adapter.get_final_norm(model)
     lm_head = adapter.get_lm_head(model)
     head_dim = first.head_dim
+    if adapter.uses_hidden_stream_channel_pruning(model):
+        return _discover_hidden_stream_channelwise(
+            model,
+            adapter,
+            layer_metadata,
+            first,
+            embed_tokens,
+            final_norm,
+            lm_head,
+        )
+
     groups: list[PruningGroup] = []
     for channel_idx in range(head_dim):
         residual_indices = tuple(
@@ -336,6 +347,152 @@ def discover_channelwise(model, adapter: BaseModelAdapter, example_batch=None) -
         metadata={
             "discovery_kind": "adapter_rules",
             "channel_group_kind": "per_head_channel_bundle",
+        },
+    )
+
+
+def _discover_hidden_stream_channelwise(
+    model,
+    adapter: BaseModelAdapter,
+    layer_metadata: tuple[LayerMetadata, ...],
+    first: LayerMetadata,
+    embed_tokens,
+    final_norm,
+    lm_head,
+) -> DiscoveryContext:
+    groups: list[PruningGroup] = []
+    for channel_idx in range(first.hidden_size):
+        residual_indices = (channel_idx,)
+        dependent_slices = [
+            SliceSpec(
+                module_path=adapter.module_path(model, embed_tokens),
+                param_name="weight",
+                axis=1,
+                indices=residual_indices,
+                role="embed_tokens_in",
+            ),
+            SliceSpec(
+                module_path=adapter.module_path(model, final_norm),
+                param_name="weight",
+                axis=0,
+                indices=residual_indices,
+                role="final_norm",
+            ),
+        ]
+
+        if lm_head is not None and hasattr(lm_head, "weight"):
+            dependent_slices.append(
+                SliceSpec(
+                    module_path=adapter.module_path(model, lm_head),
+                    param_name="weight",
+                    axis=1,
+                    indices=residual_indices,
+                    role="lm_head_in",
+                )
+            )
+
+        for metadata in layer_metadata:
+            handles = adapter.get_layer_handles(model, metadata.layer_idx)
+            dependent_slices.extend(
+                (
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.input_layernorm),
+                        param_name="weight",
+                        axis=0,
+                        indices=residual_indices,
+                        role="input_norm",
+                    ),
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.post_attention_layernorm),
+                        param_name="weight",
+                        axis=0,
+                        indices=residual_indices,
+                        role="post_attention_norm",
+                    ),
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.attention.q_proj),
+                        param_name="weight",
+                        axis=1,
+                        indices=residual_indices,
+                        role="q_proj_in",
+                    ),
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.attention.k_proj),
+                        param_name="weight",
+                        axis=1,
+                        indices=residual_indices,
+                        role="k_proj_in",
+                    ),
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.attention.v_proj),
+                        param_name="weight",
+                        axis=1,
+                        indices=residual_indices,
+                        role="v_proj_in",
+                    ),
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.attention.o_proj),
+                        param_name="weight",
+                        axis=0,
+                        indices=residual_indices,
+                        role="o_proj_out",
+                    ),
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.mlp.gate_proj),
+                        param_name="weight",
+                        axis=1,
+                        indices=residual_indices,
+                        role="gate_proj_in",
+                    ),
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.mlp.up_proj),
+                        param_name="weight",
+                        axis=1,
+                        indices=residual_indices,
+                        role="up_proj_in",
+                    ),
+                    SliceSpec(
+                        module_path=adapter.module_path(model, handles.mlp.down_proj),
+                        param_name="weight",
+                        axis=0,
+                        indices=residual_indices,
+                        role="down_proj_out",
+                    ),
+                )
+            )
+
+        groups.append(
+            PruningGroup(
+                group_id="channel.hidden{}".format(channel_idx),
+                family="channel",
+                layer_idx=None,
+                local_idx=channel_idx,
+                members=("hidden_stream", "attention_inputs", "mlp", "lm_head"),
+                dependent_slices=tuple(dependent_slices),
+                width=1,
+                metadata={
+                    "residual_indices": residual_indices,
+                    "kv_indices": (),
+                    "channel_idx": channel_idx,
+                },
+            )
+        )
+
+    return DiscoveryContext(
+        mode="channel",
+        family_key=adapter.family_for_model(model),
+        model_class_path=adapter.model_class_path(model),
+        config_class_path=adapter.config_class_path(model),
+        base_config=adapter.config_to_dict(model),
+        groups=tuple(groups),
+        layer_metadata=layer_metadata,
+        hidden_size=first.hidden_size,
+        num_attention_heads=first.num_attention_heads,
+        num_key_value_heads=first.num_key_value_heads,
+        head_dim=first.head_dim,
+        metadata={
+            "discovery_kind": "adapter_rules",
+            "channel_group_kind": "hidden_stream",
         },
     )
 

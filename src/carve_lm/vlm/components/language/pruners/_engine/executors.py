@@ -234,6 +234,9 @@ def apply_channelwise_plan(
     plan: PruningPlan,
     config: WidthChannelConfig,
 ):
+    if adapter.uses_hidden_stream_channel_pruning(model):
+        return _apply_hidden_stream_channelwise_plan(model, adapter, context, plan, config)
+
     pruned_model = clone_or_share(model, config.clone_model)
     group_map = context.group_map()
     selected_groups = [group_map[group_id] for group_id in plan.selected_group_ids]
@@ -359,6 +362,116 @@ def apply_channelwise_plan(
 
     adapter.patch_model_hidden_size(pruned_model, new_hidden_size)
     setattr(pruned_model.config, "head_dim", new_head_dim)
+    _append_pruning_history(pruned_model, plan)
+    return pruned_model
+
+
+def _apply_hidden_stream_channelwise_plan(
+    model,
+    adapter: BaseModelAdapter,
+    context: DiscoveryContext,
+    plan: PruningPlan,
+    config: WidthChannelConfig,
+):
+    pruned_model = clone_or_share(model, config.clone_model)
+    group_map = context.group_map()
+    selected_groups = [group_map[group_id] for group_id in plan.selected_group_ids]
+    residual_indices = sorted(
+        {
+            index
+            for group in selected_groups
+            for index in group.metadata["residual_indices"]
+        }
+    )
+    if not residual_indices:
+        raise ValueError("Channel-wise pruning must keep at least one hidden channel.")
+
+    new_hidden_size = len(residual_indices)
+    tied_embeddings = _is_tied_embedding(model, adapter)
+
+    source_embed = adapter.get_embed_tokens(pruned_model)
+    new_embed = nn.Embedding(source_embed.num_embeddings, new_hidden_size).to(
+        source_embed.weight.device,
+        dtype=source_embed.weight.dtype,
+    )
+    new_embed.weight.data.copy_(source_embed.weight.data[:, residual_indices])
+    set_module_by_path(
+        pruned_model,
+        adapter.module_path(pruned_model, source_embed),
+        new_embed,
+    )
+
+    final_norm = adapter.get_final_norm(pruned_model)
+    set_module_by_path(
+        pruned_model,
+        adapter.module_path(pruned_model, final_norm),
+        _slice_norm(final_norm, residual_indices),
+    )
+
+    lm_head = adapter.get_lm_head(pruned_model)
+    if lm_head is not None and hasattr(lm_head, "weight"):
+        new_lm_head = _slice_linear(lm_head, out_indices=None, in_indices=residual_indices)
+        if tied_embeddings:
+            new_lm_head.weight = adapter.get_embed_tokens(pruned_model).weight
+        set_module_by_path(
+            pruned_model,
+            adapter.module_path(pruned_model, lm_head),
+            new_lm_head,
+        )
+
+    for layer_idx in range(len(adapter.get_layers(pruned_model))):
+        handles = adapter.get_layer_handles(pruned_model, layer_idx)
+        layer = handles.layer
+        layer.input_layernorm = _slice_norm(handles.input_layernorm, residual_indices)
+        layer.post_attention_layernorm = _slice_norm(
+            handles.post_attention_layernorm,
+            residual_indices,
+        )
+        adapter.set_attention_projection(
+            layer,
+            "q_proj",
+            _slice_linear(handles.attention.q_proj, out_indices=None, in_indices=residual_indices),
+        )
+        adapter.set_attention_projection(
+            layer,
+            "k_proj",
+            _slice_linear(handles.attention.k_proj, out_indices=None, in_indices=residual_indices),
+        )
+        adapter.set_attention_projection(
+            layer,
+            "v_proj",
+            _slice_linear(handles.attention.v_proj, out_indices=None, in_indices=residual_indices),
+        )
+        adapter.set_attention_projection(
+            layer,
+            "o_proj",
+            _slice_linear(handles.attention.o_proj, out_indices=residual_indices, in_indices=None),
+        )
+        adapter.patch_attention_metadata(
+            adapter.get_attention_module(layer),
+            num_heads=handles.attention.num_heads,
+            num_key_value_heads=handles.attention.num_key_value_heads,
+            head_dim=handles.attention.head_dim,
+            hidden_size=new_hidden_size,
+        )
+
+        adapter.set_mlp_projection(
+            layer,
+            "gate_proj",
+            _slice_linear(handles.mlp.gate_proj, out_indices=None, in_indices=residual_indices),
+        )
+        adapter.set_mlp_projection(
+            layer,
+            "up_proj",
+            _slice_linear(handles.mlp.up_proj, out_indices=None, in_indices=residual_indices),
+        )
+        adapter.set_mlp_projection(
+            layer,
+            "down_proj",
+            _slice_linear(handles.mlp.down_proj, out_indices=residual_indices, in_indices=None),
+        )
+
+    adapter.patch_model_hidden_size(pruned_model, new_hidden_size)
     _append_pruning_history(pruned_model, plan)
     return pruned_model
 

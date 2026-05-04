@@ -353,11 +353,26 @@ class BaseModelAdapter(ABC):
 
     def patch_model_hidden_size(self, model: nn.Module, hidden_size: int) -> None:
         self.ensure_supported(model)
-        setattr(model.config, "hidden_size", int(hidden_size))
+        self.patch_decoder_config(model.config, "hidden_size", hidden_size)
 
     def patch_num_hidden_layers(self, model: nn.Module, num_hidden_layers: int) -> None:
         self.ensure_supported(model)
-        setattr(model.config, "num_hidden_layers", int(num_hidden_layers))
+        self.patch_decoder_config(model.config, "num_hidden_layers", num_hidden_layers)
+
+    def uses_hidden_stream_channel_pruning(self, model: nn.Module | None = None) -> bool:
+        del model
+        return False
+
+    @staticmethod
+    def patch_decoder_config(config, attr: str, value: int) -> None:
+        if hasattr(config, "text_config") and getattr(config, "text_config") is not None:
+            setattr(config.text_config, attr, int(value))
+        if hasattr(config, attr):
+            setattr(config, attr, int(value))
+        if not hasattr(config, attr) and not (
+            hasattr(config, "text_config") and getattr(config, "text_config") is not None
+        ):
+            setattr(config, attr, int(value))
 
     def available_components(self, model: PreTrainedModel | None = None) -> tuple[str, ...]:
         components = set(self.supported_components)
@@ -370,27 +385,27 @@ class BaseModelAdapter(ABC):
 
     @staticmethod
     def set_num_attention_heads(config, value: int) -> None:
-        config.num_attention_heads = value
+        BaseModelAdapter.patch_decoder_config(config, "num_attention_heads", value)
 
     @staticmethod
     def set_num_key_value_heads(config, value: int) -> None:
-        setattr(config, "num_key_value_heads", value)
+        BaseModelAdapter.patch_decoder_config(config, "num_key_value_heads", value)
 
     @staticmethod
     def set_hidden_size(config, value: int) -> None:
-        config.hidden_size = value
+        BaseModelAdapter.patch_decoder_config(config, "hidden_size", value)
 
     @staticmethod
     def set_intermediate_size(config, value: int) -> None:
-        config.intermediate_size = value
+        BaseModelAdapter.patch_decoder_config(config, "intermediate_size", value)
 
     @staticmethod
     def set_num_hidden_layers(config, value: int) -> None:
-        config.num_hidden_layers = value
+        BaseModelAdapter.patch_decoder_config(config, "num_hidden_layers", value)
 
     @staticmethod
     def set_head_dim(config, value: int) -> None:
-        setattr(config, "head_dim", value)
+        BaseModelAdapter.patch_decoder_config(config, "head_dim", value)
 
     @staticmethod
     def make_identity_attention() -> nn.Module:

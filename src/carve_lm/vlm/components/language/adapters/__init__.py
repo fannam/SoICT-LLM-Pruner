@@ -21,6 +21,15 @@ from .registry import (
 )
 
 Qwen2_5_VLModelAdapter = None
+Qwen3VLModelAdapter = None
+try:
+    Qwen3VLModelAdapter = getattr(
+        importlib.import_module(".models.qwen3_vl", __name__),
+        "Qwen3VLModelAdapter",
+    )
+except (ImportError, AttributeError):
+    pass
+
 try:
     Qwen2_5_VLModelAdapter = getattr(
         importlib.import_module(".models.qwen2_5_vl", __name__),
@@ -48,3 +57,5 @@ __all__ = [
 
 if Qwen2_5_VLModelAdapter is not None:
     __all__.append("Qwen2_5_VLModelAdapter")
+if Qwen3VLModelAdapter is not None:
+    __all__.append("Qwen3VLModelAdapter")

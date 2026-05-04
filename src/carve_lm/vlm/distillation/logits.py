@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from ._common import (
+    filter_model_inputs,
     get_output_attr,
     masked_logits_loss,
     maybe_finish_wandb,
@@ -63,11 +64,13 @@ class LogitsDistiller:
         teacher_batch = move_batch_to_device(batch, device_teacher)
         teacher_batch["output_hidden_states"] = False
         teacher_batch["use_cache"] = False
+        teacher_batch = filter_model_inputs(self.teacher_model, teacher_batch)
         return self.teacher_model(**teacher_batch)
 
     def _forward_student(self, batch):
         student_batch = dict(batch)
         student_batch["use_cache"] = False
+        student_batch = filter_model_inputs(self.student_model, student_batch)
         return self.student_model(**student_batch)
 
     def _run_validation(

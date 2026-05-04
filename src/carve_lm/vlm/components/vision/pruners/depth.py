@@ -43,7 +43,7 @@ class DepthLayerPruner:
                 num_attention_heads=self.adapter.num_attention_heads(self.model, block),
                 num_key_value_heads=self.adapter.num_attention_heads(self.model, block),
                 head_dim=self.adapter.head_dim(self.model, block),
-                intermediate_size=self.adapter.get_mlp_projections(block).down_proj.in_features,
+                intermediate_size=self.adapter.get_mlp_intermediate_size(block),
                 hidden_size=self.adapter.hidden_size(self.model, block),
             )
             for block_idx, block in enumerate(blocks)

@@ -56,46 +56,54 @@ class WidthPruner:
 
     def discover(self, example_batch=None) -> DiscoveryContext:
         del example_batch
-        merger = self.adapter.get_merger(self.model)
+        mergers = self.adapter.get_mergers(self.model)
+        merger = mergers[0]
         projections = self.adapter.get_projections(merger)
         intermediate_size = projections.fc2.in_features
         input_hidden_size = self.adapter.input_hidden_size(self.model, merger)
         output_hidden_size = self.adapter.output_hidden_size(self.model, merger)
 
-        groups = tuple(
-            PruningGroup(
-                group_id="merger.intermediate.{}".format(channel_idx),
-                family="intermediate",
-                layer_idx=None,
-                local_idx=channel_idx,
-                members=("merger.mlp.0", "merger.mlp.2"),
-                dependent_slices=(
-                    SliceSpec(
-                        module_path=self.adapter.module_path(self.model, projections.fc1),
-                        param_name="weight",
-                        axis=0,
-                        indices=(channel_idx,),
-                        role="fc1_out",
-                    ),
-                    SliceSpec(
-                        module_path=self.adapter.module_path(self.model, projections.fc2),
-                        param_name="weight",
-                        axis=1,
-                        indices=(channel_idx,),
-                        role="fc2_in",
-                    ),
-                ),
-                metadata={"channel_idx": channel_idx},
+        groups = []
+        for channel_idx in range(intermediate_size):
+            dependent_slices = []
+            for merger in mergers:
+                projections = self.adapter.get_projections(merger)
+                dependent_slices.extend(
+                    (
+                        SliceSpec(
+                            module_path=self.adapter.module_path(self.model, projections.fc1),
+                            param_name="weight",
+                            axis=0,
+                            indices=(channel_idx,),
+                            role="fc1_out",
+                        ),
+                        SliceSpec(
+                            module_path=self.adapter.module_path(self.model, projections.fc2),
+                            param_name="weight",
+                            axis=1,
+                            indices=(channel_idx,),
+                            role="fc2_in",
+                        ),
+                    )
+                )
+            groups.append(
+                PruningGroup(
+                    group_id="merger.intermediate.{}".format(channel_idx),
+                    family="intermediate",
+                    layer_idx=None,
+                    local_idx=channel_idx,
+                    members=("merger.fc1", "merger.fc2"),
+                    dependent_slices=tuple(dependent_slices),
+                    metadata={"channel_idx": channel_idx},
+                )
             )
-            for channel_idx in range(intermediate_size)
-        )
         self._last_context = DiscoveryContext(
             mode="intermediate",
             family_key=self.adapter.name,
             model_class_path=self.adapter.model_class_path(self.model),
             config_class_path=self.adapter.config_class_path(self.model),
             base_config=self.adapter.config_to_dict(self.model),
-            groups=groups,
+            groups=tuple(groups),
             layer_metadata=(
                 LayerMetadata(
                     layer_idx=0,
@@ -231,18 +239,18 @@ class WidthPruner:
 
     def _apply_intermediate_indices(self, keep_indices: list[int], *, clone_model: bool):
         pruned_model = clone_or_share(self.model, clone_model).to(self.device)
-        merger = self.adapter.get_merger(pruned_model)
-        projections = self.adapter.get_projections(merger)
-        self.adapter.set_projection(
-            merger,
-            "fc1",
-            slice_linear(projections.fc1, out_indices=keep_indices, in_indices=None),
-        )
-        self.adapter.set_projection(
-            merger,
-            "fc2",
-            slice_linear(projections.fc2, out_indices=None, in_indices=keep_indices),
-        )
+        for merger in self.adapter.get_mergers(pruned_model):
+            projections = self.adapter.get_projections(merger)
+            self.adapter.set_projection(
+                merger,
+                "fc1",
+                slice_linear(projections.fc1, out_indices=keep_indices, in_indices=None),
+            )
+            self.adapter.set_projection(
+                merger,
+                "fc2",
+                slice_linear(projections.fc2, out_indices=None, in_indices=keep_indices),
+            )
         return pruned_model
 
     @staticmethod
