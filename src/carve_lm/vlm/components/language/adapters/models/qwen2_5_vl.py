@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch.nn as nn
 
-from .decoder import DecoderModelAdapter
+from ..decoder import DecoderModelAdapter
 
 try:
     from transformers import Qwen2_5_VLForConditionalGeneration

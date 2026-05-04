@@ -57,6 +57,6 @@ def resolve_model_adapter(
     return resolved
 
 
-adapter_cls = _load_optional_adapter("qwen2_5_vl", "Qwen2_5_VLModelAdapter")
+adapter_cls = _load_optional_adapter("models.qwen2_5_vl", "Qwen2_5_VLModelAdapter")
 if adapter_cls is not None:
     register_model_adapter(adapter_cls())

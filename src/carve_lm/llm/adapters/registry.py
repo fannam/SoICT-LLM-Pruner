@@ -6,9 +6,7 @@ from transformers import PreTrainedModel
 
 from .base import BaseModelAdapter
 from .decoder import GenericDecoderModelAdapter
-from .llama import LlamaModelAdapter
-from .mistral import MistralModelAdapter
-from .qwen2 import Qwen2ModelAdapter
+from .models import LlamaModelAdapter, MistralModelAdapter, Qwen2ModelAdapter
 
 _MODEL_ADAPTERS: list[BaseModelAdapter] = []
 _FALLBACK_MODEL_ADAPTER = GenericDecoderModelAdapter()
@@ -69,7 +67,7 @@ def resolve_model_adapter(
 for adapter_cls in (
     LlamaModelAdapter,
     Qwen2ModelAdapter,
-    _load_optional_adapter("qwen3", "Qwen3ModelAdapter"),
+    _load_optional_adapter("models.qwen3", "Qwen3ModelAdapter"),
     MistralModelAdapter,
 ):
     if adapter_cls is not None:

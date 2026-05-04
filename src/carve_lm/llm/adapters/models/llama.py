@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from transformers import LlamaForCausalLM
 
-from .decoder import DecoderModelAdapter
+from ..decoder import DecoderModelAdapter
 
 
 class LlamaModelAdapter(DecoderModelAdapter):

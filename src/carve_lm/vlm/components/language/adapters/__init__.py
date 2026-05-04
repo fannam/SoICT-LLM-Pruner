@@ -22,7 +22,10 @@ from .registry import (
 
 Qwen2_5_VLModelAdapter = None
 try:
-    Qwen2_5_VLModelAdapter = getattr(importlib.import_module(".qwen2_5_vl", __name__), "Qwen2_5_VLModelAdapter")
+    Qwen2_5_VLModelAdapter = getattr(
+        importlib.import_module(".models.qwen2_5_vl", __name__),
+        "Qwen2_5_VLModelAdapter",
+    )
 except (ImportError, AttributeError):
     pass
 

@@ -2,10 +2,10 @@
 Backward-compatibility shim. Import directly from the sub-modules instead:
   - base.py       – dataclasses, BaseModelAdapter, utilities
   - decoder.py    – DecoderModelAdapter, GenericDecoderModelAdapter
-  - llama.py      – LlamaModelAdapter
-  - qwen2.py      – Qwen2ModelAdapter
-  - qwen3.py      – Qwen3ModelAdapter (when supported by transformers)
-  - mistral.py    – MistralModelAdapter
+  - models/llama.py   – LlamaModelAdapter
+  - models/qwen2.py   – Qwen2ModelAdapter
+  - models/qwen3.py   – Qwen3ModelAdapter (when supported by transformers)
+  - models/mistral.py – MistralModelAdapter
   - registry.py   – register_model_adapter, get_model_adapter, resolve_model_adapter, …
 """
 from __future__ import annotations
@@ -24,9 +24,7 @@ from .base import (
     object_path,
 )
 from .decoder import DecoderModelAdapter, GenericDecoderModelAdapter
-from .llama import LlamaModelAdapter
-from .mistral import MistralModelAdapter
-from .qwen2 import Qwen2ModelAdapter
+from .models import LlamaModelAdapter, MistralModelAdapter, Qwen2ModelAdapter
 from .registry import (
     get_model_adapter,
     register_model_adapter,
@@ -36,7 +34,10 @@ from .registry import (
 
 Qwen3ModelAdapter = None
 try:
-    Qwen3ModelAdapter = getattr(importlib.import_module(".qwen3", __name__.rsplit(".", 1)[0]), "Qwen3ModelAdapter")
+    Qwen3ModelAdapter = getattr(
+        importlib.import_module(".models.qwen3", __name__.rsplit(".", 1)[0]),
+        "Qwen3ModelAdapter",
+    )
 except (ImportError, AttributeError):
     pass
 

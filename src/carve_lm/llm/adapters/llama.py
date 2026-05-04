@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-from transformers import LlamaForCausalLM
+from .models.llama import LlamaModelAdapter
 
-from .decoder import DecoderModelAdapter
-
-
-class LlamaModelAdapter(DecoderModelAdapter):
-    def __init__(self):
-        super().__init__(name="llama", model_cls=LlamaForCausalLM)
+__all__ = ["LlamaModelAdapter"]

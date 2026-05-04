@@ -13,9 +13,7 @@ from .base import (
     object_path,
 )
 from .decoder import DecoderModelAdapter, GenericDecoderModelAdapter
-from .llama import LlamaModelAdapter
-from .mistral import MistralModelAdapter
-from .qwen2 import Qwen2ModelAdapter
+from .models import LlamaModelAdapter, MistralModelAdapter, Qwen2ModelAdapter
 from .registry import (
     get_model_adapter,
     register_model_adapter,
@@ -25,7 +23,7 @@ from .registry import (
 
 Qwen3ModelAdapter = None
 try:
-    Qwen3ModelAdapter = getattr(importlib.import_module(".qwen3", __name__), "Qwen3ModelAdapter")
+    Qwen3ModelAdapter = getattr(importlib.import_module(".models.qwen3", __name__), "Qwen3ModelAdapter")
 except (ImportError, AttributeError):
     pass
 

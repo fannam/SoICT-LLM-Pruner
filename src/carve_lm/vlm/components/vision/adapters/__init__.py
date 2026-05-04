@@ -63,7 +63,7 @@ def resolve_model_adapter(model, adapter=None):
 
 try:
     Qwen2_5_VLVisionAdapter = getattr(
-        importlib.import_module(".qwen2_5_vl", __name__),
+        importlib.import_module(".models.qwen2_5_vl", __name__),
         "Qwen2_5_VLVisionAdapter",
     )
     register_model_adapter(Qwen2_5_VLVisionAdapter())
