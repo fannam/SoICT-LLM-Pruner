@@ -2,7 +2,7 @@
 Backward-compatibility shim. Import directly from the sub-modules instead:
   - base.py       – dataclasses, BaseModelAdapter, utilities
   - decoder.py    – DecoderModelAdapter, GenericDecoderModelAdapter
-  - qwen2_5_vl.py – Qwen2_5_VLModelAdapter (when supported by transformers)
+  - qwen2_5_vl.py – Qwen2_5_VLModelAdapter
   - registry.py   – register_model_adapter, get_model_adapter, resolve_model_adapter, …
 """
 from __future__ import annotations

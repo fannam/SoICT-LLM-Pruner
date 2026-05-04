@@ -3,6 +3,10 @@ from __future__ import annotations
 import warnings
 
 from ..core import PRUNER_REGISTRY
+from .config import DepthLayerConfig, EstimatorSpec, WidthChannelConfig
+from .depth import DepthLayerPruner
+from .types import PruningResult
+from .width import WidthChannelPruner, WidthPruner
 
 
 def create_pruner(name: str, *args, **kwargs):
@@ -29,5 +33,14 @@ def available_pruners(
         return names
     return tuple(name for name in names if name.startswith(prefix))
 
-
-__all__ = ["available_pruners", "create_pruner"]
+__all__ = [
+    "DepthLayerConfig",
+    "DepthLayerPruner",
+    "EstimatorSpec",
+    "PruningResult",
+    "WidthChannelConfig",
+    "WidthChannelPruner",
+    "WidthPruner",
+    "available_pruners",
+    "create_pruner",
+]

@@ -372,7 +372,7 @@ def apply_layerwise_plan(
     pruned_model = clone_or_share(model, config.clone_model)
     layers = adapter.get_layers(pruned_model)
     keep_count = int(plan.metadata["target_num_layers"])
-    pruned_model.model.layers = nn.ModuleList(list(layers[:keep_count]))
+    adapter.set_layers(pruned_model, layers[:keep_count])
     adapter.patch_num_hidden_layers(pruned_model, keep_count)
     _append_pruning_history(pruned_model, plan)
     return pruned_model

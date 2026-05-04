@@ -125,6 +125,10 @@ class BaseModelAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def set_layers(self, model: PreTrainedModel, layers) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_embed_tokens(self, model: PreTrainedModel) -> nn.Embedding:
         raise NotImplementedError
 
@@ -232,18 +236,21 @@ class BaseModelAdapter(ABC):
             return config
 
     def _infer_head_dim(self, model: nn.Module, layer: nn.Module) -> int:
-        config_head_dim = getattr(getattr(model, "config", None), "head_dim", None)
+        config = getattr(model, "config", None)
+        text_config = getattr(config, "text_config", None)
+        config_head_dim = getattr(config, "head_dim", None)
+        if config_head_dim is None and text_config is not None:
+            config_head_dim = getattr(text_config, "head_dim", None)
         if config_head_dim is not None:
             return int(config_head_dim)
 
         attention = self.get_attention_projections(layer)
-        num_heads = int(
-            getattr(
-                self.get_attention_module(layer),
-                "num_heads",
-                getattr(model.config, "num_attention_heads", 0),
-            )
-        )
+        num_heads = getattr(self.get_attention_module(layer), "num_heads", None)
+        if num_heads is None:
+            num_heads = getattr(config, "num_attention_heads", None)
+        if num_heads is None and text_config is not None:
+            num_heads = getattr(text_config, "num_attention_heads", None)
+        num_heads = int(num_heads or 0)
         if num_heads <= 0:
             raise ValueError("Unable to infer attention head_dim.")
         if attention.q_proj.out_features % num_heads != 0:
@@ -257,29 +264,26 @@ class BaseModelAdapter(ABC):
     ) -> AttentionHandles:
         attention_module = self.get_attention_module(layer)
         projections = self.get_attention_projections(layer)
-        num_heads = int(
-            getattr(
-                attention_module,
-                "num_heads",
-                getattr(model.config, "num_attention_heads", 0),
-            )
-        )
+        config = getattr(model, "config", None)
+        text_config = getattr(config, "text_config", None)
+        num_heads = getattr(attention_module, "num_heads", None)
+        if num_heads is None:
+            num_heads = getattr(config, "num_attention_heads", None)
+        if num_heads is None and text_config is not None:
+            num_heads = getattr(text_config, "num_attention_heads", None)
+        num_heads = int(num_heads or 0)
         if num_heads <= 0:
             raise ValueError("Unable to infer num_heads for {}.".format(type(attention_module).__name__))
-        num_key_value_heads = int(
-            getattr(
-                attention_module,
-                "num_key_value_heads",
-                getattr(model.config, "num_key_value_heads", num_heads),
-            )
-        )
-        head_dim = int(
-            getattr(
-                attention_module,
-                "head_dim",
-                self._infer_head_dim(model, layer),
-            )
-        )
+        num_key_value_heads = getattr(attention_module, "num_key_value_heads", None)
+        if num_key_value_heads is None:
+            num_key_value_heads = getattr(config, "num_key_value_heads", None)
+        if num_key_value_heads is None and text_config is not None:
+            num_key_value_heads = getattr(text_config, "num_key_value_heads", None)
+        num_key_value_heads = int(num_key_value_heads or num_heads)
+        head_dim = getattr(attention_module, "head_dim", None)
+        if head_dim is None:
+            head_dim = self._infer_head_dim(model, layer)
+        head_dim = int(head_dim)
         return AttentionHandles(
             module=attention_module,
             q_proj=projections.q_proj,

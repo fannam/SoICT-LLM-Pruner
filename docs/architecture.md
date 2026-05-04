@@ -121,11 +121,11 @@ Structured block-wise discovery creates only two group families:
 
 Structured persistence is manifest-based. LLM pruners store `llm_pruner_manifest.json`; VLM language-component pruners store `vlm_pruner_manifest.json`. `load_pruned()` reconstructs the dense base architecture before replaying the structural rewrite. Manifest v2 records canonical pruner names, adapter metadata, and config payloads.
 
-The VLM namespace is now component-scoped:
+The VLM namespace is component-scoped:
 
 - `carve_lm.vlm.components.language.*`: active decoder/text pruning stack
-- `carve_lm.vlm.components.vision.*`: reserved for future vision-specific estimators and pruners
-- `carve_lm.vlm.components.merger.*`: reserved for future merger-specific estimators and pruners
+- `carve_lm.vlm.components.vision.*`: vision-transformer estimators for fused-QKV Qwen2.5-VL blocks; pruners are not implemented yet
+- `carve_lm.vlm.components.merger.*`: patch-merger estimators for Qwen2.5-VL merger MLPs; pruners are not implemented yet
 
 ### Distillation And Recovery
 

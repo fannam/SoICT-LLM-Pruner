@@ -168,22 +168,33 @@ def _first_decoder_layer(adapter: BaseModelAdapter, model: nn.Module) -> nn.Modu
     return layers[0]
 
 
-def _attention_head_dim(adapter: BaseModelAdapter, model: nn.Module) -> int:
-    config_head_dim = getattr(model.config, "head_dim", None)
-    if config_head_dim is not None:
-        return int(config_head_dim)
+def _decoder_num_layers(adapter: BaseModelAdapter, model: nn.Module) -> int:
+    return len(adapter.get_layers(model))
 
-    layer = _first_decoder_layer(adapter, model)
-    attention = adapter.get_attention_projections(layer)
-    num_heads = model.config.num_attention_heads
-    if attention.q_proj.out_features % num_heads != 0:
-        raise ValueError(
-            "q_proj.out_features ({}) must be divisible by num_attention_heads ({}).".format(
-                attention.q_proj.out_features,
-                num_heads,
-            )
-        )
-    return attention.q_proj.out_features // num_heads
+
+def _decoder_hidden_size(adapter: BaseModelAdapter, model: nn.Module) -> int:
+    try:
+        return int(adapter.hidden_size(model))
+    except AttributeError:
+        pass
+
+    layers = adapter.get_layers(model)
+    if len(layers) > 0:
+        return int(adapter.get_attention_handles(model, layers[0]).o_proj.out_features)
+
+    embed_tokens = adapter.get_embed_tokens(model)
+    embedding_dim = getattr(embed_tokens, "embedding_dim", None)
+    if embedding_dim is not None:
+        return int(embedding_dim)
+    return int(embed_tokens.weight.shape[1])
+
+
+def _decoder_attention_handles(adapter: BaseModelAdapter, model: nn.Module):
+    return adapter.get_attention_handles(model, _first_decoder_layer(adapter, model))
+
+
+def _attention_head_dim(adapter: BaseModelAdapter, model: nn.Module) -> int:
+    return int(_decoder_attention_handles(adapter, model).head_dim)
 
 
 class _BaseEstimator:
@@ -212,9 +223,10 @@ class _BaseActivationElementEstimator(_BaseEstimator):
     ):
         super().__init__(model=model, device=device, model_adapter=model_adapter)
         self.model = model.to(device)
-        self.num_heads = self.model.config.num_attention_heads
-        self.num_key_value_heads = getattr(self.model.config, "num_key_value_heads", self.num_heads)
-        self.hidden_size = self.model.config.hidden_size
+        attention = _decoder_attention_handles(self.adapter, self.model)
+        self.num_heads = attention.num_heads
+        self.num_key_value_heads = attention.num_key_value_heads
+        self.hidden_size = _decoder_hidden_size(self.adapter, self.model)
         self.head_dim = _attention_head_dim(self.adapter, self.model)
         first_layer = _first_decoder_layer(self.adapter, self.model)
         self.intermediate_size = self.adapter.get_mlp_projections(first_layer).down_proj.in_features
@@ -429,10 +441,11 @@ class _BaseWeightMagnitudeEstimator(_BaseEstimator):
                 "Model does not have a 'config' attribute. Please pass a Hugging Face model."
             )
 
-        self.hidden_size = model.config.hidden_size
-        self.num_layers = model.config.num_hidden_layers
-        self.num_attention_heads = model.config.num_attention_heads
-        self.num_key_value_heads = getattr(model.config, "num_key_value_heads", self.num_attention_heads)
+        attention = _decoder_attention_handles(self.adapter, self.model)
+        self.hidden_size = _decoder_hidden_size(self.adapter, self.model)
+        self.num_layers = _decoder_num_layers(self.adapter, self.model)
+        self.num_attention_heads = attention.num_heads
+        self.num_key_value_heads = attention.num_key_value_heads
         self.head_dim = _attention_head_dim(self.adapter, self.model)
         self._validate_model_structure()
 
@@ -731,7 +744,7 @@ class _BaseSimilarityLayerEstimator(_BaseEstimator):
 
     @torch.no_grad()
     def estimate(self, dataloader: DataLoader) -> Dict[str, List[float]]:
-        num_layers = self.model.config.num_hidden_layers
+        num_layers = _decoder_num_layers(self.adapter, self.model)
         attention_scores: Dict[int, List[float]] = defaultdict(list)
         mlp_scores: Dict[int, List[float]] = defaultdict(list)
 
@@ -790,7 +803,7 @@ class _BaseSimilarityBlockEstimator(_BaseEstimator):
         self.model = model.eval().to(device)
         self.device = device
         self.block_size = block_size
-        num_layers = self.model.config.num_hidden_layers
+        num_layers = _decoder_num_layers(self.adapter, self.model)
         if block_size > num_layers:
             raise ValueError(
                 "block_size ({}) cannot be greater than num_layers ({})".format(
@@ -841,7 +854,7 @@ class _BaseSimilarityBlockEstimator(_BaseEstimator):
 
     @torch.no_grad()
     def estimate(self, dataloader: DataLoader) -> List[float]:
-        num_layers = self.model.config.num_hidden_layers
+        num_layers = _decoder_num_layers(self.adapter, self.model)
         max_start = num_layers - self.block_size + 1
         importance_sums = [0.0 for _ in range(max_start)]
         valid_counts = [0 for _ in range(max_start)]
@@ -906,7 +919,7 @@ class _BaseBlockPerplexityEstimator(_BaseEstimator):
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.device = device
-        self.num_layers = self.model.config.num_hidden_layers
+        self.num_layers = _decoder_num_layers(self.adapter, self.model)
         if block_size > self.num_layers:
             raise ValueError(
                 "block_size ({}) cannot be greater than num_layers ({})".format(

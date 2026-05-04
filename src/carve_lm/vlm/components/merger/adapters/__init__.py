@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
+from .base import BaseMergerAdapter, MergerProjectionBundle
+
 __all__ = [
+    "BaseMergerAdapter",
+    "MergerProjectionBundle",
     "get_model_adapter",
     "register_model_adapter",
     "registered_model_adapters",
@@ -53,3 +58,14 @@ def resolve_model_adapter(model, adapter=None):
     if callable(ensure_supported):
         ensure_supported(model)
     return resolved
+
+
+try:
+    Qwen2_5_VLMergerAdapter = getattr(
+        importlib.import_module(".qwen2_5_vl", __name__),
+        "Qwen2_5_VLMergerAdapter",
+    )
+    register_model_adapter(Qwen2_5_VLMergerAdapter())
+    __all__.append("Qwen2_5_VLMergerAdapter")
+except (ImportError, AttributeError, KeyError):
+    Qwen2_5_VLMergerAdapter = None

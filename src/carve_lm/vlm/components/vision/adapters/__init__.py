@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
+from .base import BaseVisionAdapter, VisionAttentionProjectionBundle, VisionMLPProjectionBundle
+
 __all__ = [
+    "BaseVisionAdapter",
+    "VisionAttentionProjectionBundle",
+    "VisionMLPProjectionBundle",
     "get_model_adapter",
     "register_model_adapter",
     "registered_model_adapters",
@@ -53,3 +59,14 @@ def resolve_model_adapter(model, adapter=None):
     if callable(ensure_supported):
         ensure_supported(model)
     return resolved
+
+
+try:
+    Qwen2_5_VLVisionAdapter = getattr(
+        importlib.import_module(".qwen2_5_vl", __name__),
+        "Qwen2_5_VLVisionAdapter",
+    )
+    register_model_adapter(Qwen2_5_VLVisionAdapter())
+    __all__.append("Qwen2_5_VLVisionAdapter")
+except (ImportError, AttributeError, KeyError):
+    Qwen2_5_VLVisionAdapter = None

@@ -3,6 +3,10 @@ from __future__ import annotations
 import warnings
 
 from ..core import PRUNER_REGISTRY
+from .bridge import BridgeChannelPruner
+from .config import BridgeChannelConfig, EstimatorSpec, WidthConfig
+from .types import PruningResult
+from .width import WidthPruner
 
 
 def create_pruner(name: str, *args, **kwargs):
@@ -30,4 +34,13 @@ def available_pruners(
     return tuple(name for name in names if name.startswith(prefix))
 
 
-__all__ = ["available_pruners", "create_pruner"]
+__all__ = [
+    "BridgeChannelConfig",
+    "BridgeChannelPruner",
+    "EstimatorSpec",
+    "PruningResult",
+    "WidthConfig",
+    "WidthPruner",
+    "available_pruners",
+    "create_pruner",
+]

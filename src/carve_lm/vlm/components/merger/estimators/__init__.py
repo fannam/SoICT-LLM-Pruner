@@ -3,6 +3,8 @@ from __future__ import annotations
 import warnings
 
 from ..core import ESTIMATOR_REGISTRY
+from .activation import ActivationEstimator
+from .magnitude import MagnitudeEstimator
 
 
 def create_estimator(name: str, *args, **kwargs):
@@ -30,4 +32,9 @@ def available_estimators(
     return tuple(name for name in names if name.startswith(prefix))
 
 
-__all__ = ["available_estimators", "create_estimator"]
+__all__ = [
+    "ActivationEstimator",
+    "MagnitudeEstimator",
+    "available_estimators",
+    "create_estimator",
+]

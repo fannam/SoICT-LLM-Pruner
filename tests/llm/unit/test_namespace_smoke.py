@@ -49,6 +49,8 @@ def test_vlm_public_namespaces_smoke_import():
     from carve_lm.vlm.components.language.estimators import ActivationEstimator
     from carve_lm.vlm.components.language.pruners import WidthGroupConfig, WidthPruner
     from carve_lm.vlm.components.merger.estimators import available_estimators as available_merger_estimators
+    from carve_lm.vlm.components.merger.pruners import available_pruners as available_merger_pruners
+    from carve_lm.vlm.components.vision.estimators import available_estimators as available_vision_estimators
     from carve_lm.vlm.components.vision.pruners import available_pruners as available_vision_pruners
     from carve_lm.vlm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
     from carve_lm.vlm.evaluation import VLMMeasurer
@@ -63,8 +65,15 @@ def test_vlm_public_namespaces_smoke_import():
     assert LogitsDistiller is not None
     assert OTConfig is not None
     assert VLMMeasurer is not None
-    assert available_vision_pruners() == ()
-    assert available_merger_estimators() == ()
+    assert available_vision_estimators() == (
+        "activation.element",
+        "magnitude.element",
+        "similarity.block",
+        "similarity.layer",
+    )
+    assert available_vision_pruners() == ("depth.layer", "width", "width.channel")
+    assert available_merger_estimators() == ("activation.element", "magnitude.element")
+    assert available_merger_pruners() == ("width", "width.bridge")
 
 
 def test_old_root_pruning_imports_are_removed():

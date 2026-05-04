@@ -23,6 +23,10 @@ class DecoderModelAdapter(BaseModelAdapter):
         self.ensure_supported(model)
         return model.model.layers
 
+    def set_layers(self, model: PreTrainedModel, layers) -> None:
+        self.ensure_supported(model)
+        model.model.layers = nn.ModuleList(list(layers))
+
     def get_embed_tokens(self, model: PreTrainedModel) -> nn.Embedding:
         self.ensure_supported(model)
         return model.model.embed_tokens
