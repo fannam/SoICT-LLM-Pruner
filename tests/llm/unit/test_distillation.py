@@ -10,7 +10,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from carve_lm.llm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
+from carve_lm.llm.distillation import (
+    HybridDistiller,
+    HybridOTDistiller,
+    LogitsDistiller,
+    OTConfig,
+    create_distillation_dataloader,
+)
 from carve_lm.llm.distillation.optimal_transport import masked_ot_loss, sinkhorn_divergence
 
 
@@ -132,9 +138,38 @@ class DummyAccelerator:
 class DummyTokenizer:
     def __init__(self):
         self.saved_path = None
+        self.pad_token_id = 0
+        self.eos_token_id = 2
 
     def save_pretrained(self, output_dir):
         self.saved_path = Path(output_dir)
+
+    def __call__(
+        self,
+        texts,
+        *,
+        padding=True,
+        truncation=True,
+        max_length=None,
+        return_tensors=None,
+    ):
+        del padding, truncation
+        rows = []
+        for text in texts:
+            ids = [ord(char) % 13 + 3 for char in text]
+            if max_length is not None:
+                ids = ids[:max_length]
+            rows.append(torch.tensor(ids, dtype=torch.long))
+
+        width = max(row.numel() for row in rows)
+        input_ids = torch.full((len(rows), width), self.pad_token_id, dtype=torch.long)
+        attention_mask = torch.zeros_like(input_ids)
+        for row_idx, row in enumerate(rows):
+            input_ids[row_idx, : row.numel()] = row
+            attention_mask[row_idx, : row.numel()] = 1
+        if return_tensors != "pt":
+            raise ValueError("DummyTokenizer only supports return_tensors='pt'.")
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
 def make_batch(offset: int, *, vocab_size: int, padded: bool = False) -> dict[str, torch.Tensor]:
@@ -191,6 +226,38 @@ def test_logits_loss_ignores_masked_positions():
     loss_b = distiller.logits_loss(student_logits, teacher_logits, labels_b, loss_mask)
 
     assert torch.isclose(loss_a, loss_b)
+
+
+def test_distillation_dataloader_tokenizes_text_and_builds_labels():
+    loader = create_distillation_dataloader(
+        [{"text": "abc"}, {"text": "de"}],
+        tokenizer=DummyTokenizer(),
+        batch_size=2,
+        max_length=4,
+    )
+
+    batch = next(iter(loader))
+
+    assert batch["input_ids"].shape == (2, 3)
+    assert batch["attention_mask"].tolist() == [[1, 1, 1], [1, 1, 0]]
+    assert batch["labels"][1, -1].item() == -100
+
+
+def test_distillation_dataloader_pads_tokenized_samples():
+    loader = create_distillation_dataloader(
+        [
+            {"input_ids": [4, 5, 6], "metadata": 1},
+            {"input_ids": [7]},
+        ],
+        tokenizer=DummyTokenizer(),
+        batch_size=2,
+    )
+
+    batch = next(iter(loader))
+
+    assert batch["input_ids"].tolist() == [[4, 5, 6], [7, 0, 0]]
+    assert batch["attention_mask"].tolist() == [[1, 1, 1], [1, 0, 0]]
+    assert batch["labels"].tolist() == [[4, 5, 6], [7, -100, -100]]
 
 
 def test_logits_distiller_flushes_remainder_gradients():

@@ -7,10 +7,29 @@ __all__ = [
     "LogitsDistiller",
     "OTConfig",
     "TeacherCorrection",
+    "VLMDistillationCollator",
+    "create_distillation_dataloader",
+    "create_vlm_distillation_dataloader",
 ]
 
 
 def __getattr__(name: str):
+    if name in {
+        "VLMDistillationCollator",
+        "create_distillation_dataloader",
+        "create_vlm_distillation_dataloader",
+    }:
+        from .data import (
+            VLMDistillationCollator,
+            create_distillation_dataloader,
+            create_vlm_distillation_dataloader,
+        )
+
+        return {
+            "VLMDistillationCollator": VLMDistillationCollator,
+            "create_distillation_dataloader": create_distillation_dataloader,
+            "create_vlm_distillation_dataloader": create_vlm_distillation_dataloader,
+        }[name]
     if name == "DistilModel":
         from .wrappers import DistilModel
 

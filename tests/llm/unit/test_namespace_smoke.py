@@ -22,7 +22,13 @@ def test_llm_public_namespaces_smoke_import():
     from carve_lm.llm.adapters import BaseModelAdapter
     from carve_lm.llm.auto_model import PrunedAutoModelForCausalLM
     from carve_lm.llm.core import ESTIMATOR_REGISTRY
-    from carve_lm.llm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
+    from carve_lm.llm.distillation import (
+        HybridDistiller,
+        HybridOTDistiller,
+        LogitsDistiller,
+        OTConfig,
+        create_distillation_dataloader,
+    )
     from carve_lm.llm.estimators import ActivationEstimator, create_estimator
     from carve_lm.llm.evaluation import LLMMeasurer
     from carve_lm.llm.pruners import WidthGroupConfig, WidthPruner
@@ -41,6 +47,7 @@ def test_llm_public_namespaces_smoke_import():
     assert HybridOTDistiller is not None
     assert LogitsDistiller is not None
     assert OTConfig is not None
+    assert create_distillation_dataloader is not None
     assert LLMMeasurer is not None
 
 
@@ -52,7 +59,13 @@ def test_vlm_public_namespaces_smoke_import():
     from carve_lm.vlm.components.merger.pruners import available_pruners as available_merger_pruners
     from carve_lm.vlm.components.vision.estimators import available_estimators as available_vision_estimators
     from carve_lm.vlm.components.vision.pruners import available_pruners as available_vision_pruners
-    from carve_lm.vlm.distillation import HybridDistiller, HybridOTDistiller, LogitsDistiller, OTConfig
+    from carve_lm.vlm.distillation import (
+        HybridDistiller,
+        HybridOTDistiller,
+        LogitsDistiller,
+        OTConfig,
+        create_distillation_dataloader,
+    )
     from carve_lm.vlm.evaluation import VLMMeasurer
 
     assert BaseModelAdapter is not None
@@ -64,6 +77,7 @@ def test_vlm_public_namespaces_smoke_import():
     assert HybridOTDistiller is not None
     assert LogitsDistiller is not None
     assert OTConfig is not None
+    assert create_distillation_dataloader is not None
     assert VLMMeasurer is not None
     assert available_vision_estimators() == (
         "activation.element",

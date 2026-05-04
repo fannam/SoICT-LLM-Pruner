@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 __all__ = [
+    "DistillationCollator",
     "DistilModel",
     "HybridDistiller",
     "HybridOTDistiller",
     "LogitsDistiller",
     "OTConfig",
     "TeacherCorrection",
+    "create_distillation_dataloader",
 ]
 
 
 def __getattr__(name: str):
+    if name in {"DistillationCollator", "create_distillation_dataloader"}:
+        from .data import DistillationCollator, create_distillation_dataloader
+
+        return {
+            "DistillationCollator": DistillationCollator,
+            "create_distillation_dataloader": create_distillation_dataloader,
+        }[name]
     if name == "DistilModel":
         from .wrappers import DistilModel
 
