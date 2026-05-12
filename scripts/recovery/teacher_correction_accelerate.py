@@ -3,12 +3,6 @@ from __future__ import annotations
 import argparse
 import os
 
-from datasets import load_dataset
-from torch.utils.data import DataLoader
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-from carve_lm.llm.distillation import TeacherCorrection
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Teacher-correction recovery with Accelerate.")
@@ -34,6 +28,12 @@ def parse_args():
 
 
 def main() -> None:
+    from datasets import load_dataset
+    from torch.utils.data import DataLoader
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from carve_lm.llm.distillation import TeacherCorrection
+
     args = parse_args()
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
     model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)

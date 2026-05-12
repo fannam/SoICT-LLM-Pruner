@@ -54,7 +54,7 @@ This keeps pruning logic independent from model-family-specific attribute paths.
 
 ### Registries
 
-Each domain-local core registry (`carve_lm.llm.core.registry`, `carve_lm.vlm.components.language.core.registry`, and the placeholder registries under `carve_lm.vlm.components.vision.core.registry` / `carve_lm.vlm.components.merger.core.registry`) owns three extension points:
+Each domain-local core registry (`carve_lm.llm.core.registry`, `carve_lm.vlm.components.language.core.registry`, `carve_lm.vlm.components.vision.core.registry`, and `carve_lm.vlm.components.merger.core.registry`) owns three extension points:
 
 - `ESTIMATOR_REGISTRY`
 - `PRUNER_REGISTRY`
@@ -124,8 +124,8 @@ Structured persistence is manifest-based. LLM pruners store `llm_pruner_manifest
 The VLM namespace is component-scoped:
 
 - `carve_lm.vlm.components.language.*`: active decoder/text pruning stack
-- `carve_lm.vlm.components.vision.*`: vision-transformer estimators for fused-QKV Qwen2.5-VL blocks; pruners are not implemented yet
-- `carve_lm.vlm.components.merger.*`: patch-merger estimators for Qwen2.5-VL merger MLPs; pruners are not implemented yet
+- `carve_lm.vlm.components.vision.*`: vision-transformer adapters, estimators, and pruners for Qwen2.5-VL and Qwen3-VL visual blocks
+- `carve_lm.vlm.components.merger.*`: patch-merger adapters, estimators, and pruners for Qwen2.5-VL and Qwen3-VL bridge MLPs
 
 ### Distillation And Recovery
 
@@ -149,7 +149,7 @@ Operational training scripts live in `scripts/recovery/`.
 
 - `examples/`: minimal importable usage examples
 - `scripts/`: operational entrypoints
-- `notebooks/`: interactive demos
+- `Notebook/`: interactive demos
 - `tests/llm/unit/`: fast LLM behavioral coverage
 - `tests/vlm/unit/`: fast VLM behavioral coverage
 - `tests/integration/`: cross-module and persistence coverage

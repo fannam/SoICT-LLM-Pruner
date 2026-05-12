@@ -13,14 +13,22 @@ class LLMMeasurer:
     Measure latency and throughput for regular or component-pruned causal LMs.
     """
 
-    def __init__(self, model_name_or_path: str, device: str = None):
+    def __init__(
+        self,
+        model_name_or_path: str | None = None,
+        *,
+        model=None,
+        tokenizer=None,
+        device: str | None = None,
+    ):
         """
         Initializes the LLMMetrics class.
 
         Args:
-            model_name_or_path (str): The name or path of the pre-trained model.
-            device (str, optional): The device to run the model on ('cuda', 'cpu', etc.).
-                                    Defaults to 'cuda' if available, otherwise 'cpu'.
+            model_name_or_path (str, optional): The name or path of the pre-trained model.
+            model: Preloaded generation model. Useful for tests and offline benchmarks.
+            tokenizer: Preloaded tokenizer paired with `model`.
+            device (str, optional): Device to run the model on. Defaults to CUDA when available.
         """
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -29,13 +37,23 @@ class LLMMeasurer:
 
         print(f"Using device: {self.device}")
 
-        self.model = PrunedAutoModelForCausalLM.from_pretrained(model_name_or_path).to(self.device)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        if model is None:
+            if model_name_or_path is None:
+                raise ValueError("`model_name_or_path` is required when `model` is not provided.")
+            model = PrunedAutoModelForCausalLM.from_pretrained(model_name_or_path)
+        if tokenizer is None:
+            if model_name_or_path is None:
+                raise ValueError("`tokenizer` is required when `model_name_or_path` is not provided.")
+            tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+
+        self.model = model.to(self.device)
+        self.tokenizer = tokenizer
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             self.model.config.pad_token_id = self.model.config.eos_token_id
-        print(f"Model '{model_name_or_path}' and tokenizer loaded successfully.")
+        if model_name_or_path is not None:
+            print(f"Model '{model_name_or_path}' and tokenizer loaded successfully.")
 
     @torch.no_grad()
     def measure_latency(self, prompt: str, max_new_tokens: int = 50, num_runs: int = 5) -> tuple[float, int]:
