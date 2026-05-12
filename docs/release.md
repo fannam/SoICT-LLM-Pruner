@@ -13,7 +13,21 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest
 Run manually gated real-model VLM validation before promoting the project out of Alpha:
 
 ```bash
+uv sync --locked --extra dev --extra train --extra validation
 CARVE_LM_RUN_REAL_VLM_VALIDATION=1 uv run python scripts/validation/validate_real_qwen_vlm.py --device cuda
+```
+
+On Kaggle, suppress cross-filesystem uv copy warnings and install the extra runtime packages before running a smaller first slice:
+
+```bash
+export UV_LINK_MODE=copy
+uv sync --locked --extra dev --extra train --extra validation
+CARVE_LM_RUN_REAL_VLM_VALIDATION=1 uv run python scripts/validation/validate_real_qwen_vlm.py \
+  --models qwen2_5_vl \
+  --components bridge \
+  --device cuda \
+  --dtype float16 \
+  --keep-artifacts
 ```
 
 ## Build

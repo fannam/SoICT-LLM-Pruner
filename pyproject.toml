@@ -45,6 +45,10 @@ dev = [
 notebooks = [
   "jupyter>=1.0.0",
 ]
+validation = [
+  "torchvision>=0.15.0",
+  "wrapt>=1.16.0",
+]
 
 [tool.setuptools]
 package-dir = { "" = "src" }

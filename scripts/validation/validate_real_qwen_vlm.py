@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import importlib.util
 import json
 import os
 import shutil
@@ -314,6 +315,7 @@ def _load_model_and_processor(
     device_map: str | None,
     trust_remote_code: bool,
 ):
+    _ensure_real_validation_dependencies()
     transformers = _import_transformers()
     model_cls = _resolve_auto_model_cls(transformers)
     processor = transformers.AutoProcessor.from_pretrained(
@@ -358,6 +360,18 @@ def _from_pretrained(model_cls, model_id: str, *, dtype, device_map: str | None,
             kwargs["torch_dtype"] = kwargs.pop("dtype")
             return model_cls.from_pretrained(model_id, **kwargs)
         raise
+
+
+def _ensure_real_validation_dependencies() -> None:
+    missing = [name for name in ("torchvision",) if importlib.util.find_spec(name) is None]
+    if missing:
+        raise RuntimeError(
+            "Real Qwen VLM validation requires optional packages missing from this environment: {}. "
+            "Install them with `uv sync --locked --extra dev --extra train --extra validation` or, "
+            "on Kaggle, `export UV_LINK_MODE=copy && uv pip install torchvision wrapt`.".format(
+                ", ".join(missing)
+            )
+        )
 
 
 def _build_forward_inputs(torch, processor, device):

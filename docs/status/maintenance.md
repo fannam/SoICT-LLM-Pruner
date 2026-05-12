@@ -20,6 +20,12 @@ Setup:
 uv sync --locked --extra dev --extra train
 ```
 
+Manual real-model VLM validation additionally needs:
+
+```bash
+uv sync --locked --extra dev --extra train --extra validation
+```
+
 Rules:
 
 1. Library code lives under `src/carve_lm/`.
@@ -69,6 +75,7 @@ No release / publish workflow is configured. `twine` is available in the `[dev]`
 Highest-leverage areas (derived from [issues.md](issues.md) and [roadmap.md](roadmap.md)):
 
 - Add optional, manually gated real-model validation for Qwen2.5-VL and Qwen3-VL pruning + persistence round trips.
+- Run and record manually gated real-model validation for Qwen2.5-VL and Qwen3-VL pruning + persistence round trips.
 - Harden pruners for `carve_lm.vlm.components.vision` and `carve_lm.vlm.components.merger` against additional real model variants.
 - Expand examples / scripts import-smoke coverage when new entrypoints are added.
 
