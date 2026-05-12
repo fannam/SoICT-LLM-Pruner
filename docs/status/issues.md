@@ -37,22 +37,29 @@ Resolved in the current maintenance pass:
 
 ## Security Notes
 
-- License is MIT. No security policy file (`SECURITY.md`) exists.
-- `SECURITY.md` exists. No dependency-pinning lockfile is required for end users (`uv.lock` is enforced for repo development and CI only). Runtime deps use minimum-version bounds — supply-chain audit is the user's responsibility.
+- License is MIT.
+- `SECURITY.md` exists with supported-version guidance and maintainer contact.
+- No dependency-pinning lockfile is required for end users (`uv.lock` is enforced for repo development and CI only). Runtime deps use minimum-version bounds — supply-chain audit is the user's responsibility.
 - Recovery scripts in `scripts/recovery/` use `wandb`, `datasets`, and `accelerate`. They run user-supplied training configs; review before executing in shared environments.
 
-## Test Coverage Gaps
+## Test Coverage Status
 
 Observed test files:
 
-- `tests/llm/unit/`: `test_structured_pruning.py`, `test_distillation.py`, `test_activation_estimator_flow.py`, `test_weight_magnitude_flow.py`, `test_layer_perplexity.py`, `test_pruned_auto_model.py`, `test_namespace_smoke.py`.
+- `tests/llm/unit/`: `test_structured_pruning.py`, `test_distillation.py`, `test_activation_estimator_flow.py`, `test_weight_magnitude_flow.py`, `test_layer_perplexity.py`, `test_pruned_auto_model.py`, `test_namespace_smoke.py`, `test_distillation_shared.py`, `test_llm_evaluation.py`.
 - `tests/vlm/unit/`: `test_qwen3_vl_support.py`, `test_vlm_distillation.py`, `test_evaluation.py`, `test_qwen2_5_vl_support.py`.
+- `tests/integration/`: synthetic VLM pruning, persistence, and import-smoke coverage.
 
-Gaps:
+Covered:
 
 - Integration tests cover synthetic Qwen2.5-VL and Qwen3-VL pruning / persistence flows.
 - VLM `save_pruned` / `load_pruned` round trips are covered for language, vision, and merger components.
 - Vision and merger registries are covered by namespace smoke tests.
 - `LLMMeasurer` and `VLMMeasurer` have synthetic smoke coverage for latency / throughput APIs.
+
+Remaining gaps:
+
+- Real-model Qwen2.5-VL / Qwen3-VL pruning and persistence validation remains manually gated through `scripts/validation/validate_real_qwen_vlm.py`.
+- Full recovery-script training / download workflows remain manual.
 
 See [roadmap.md](roadmap.md) for prioritized fixes.

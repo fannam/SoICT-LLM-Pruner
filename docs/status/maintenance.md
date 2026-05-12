@@ -17,10 +17,7 @@ Source: [CONTRIBUTING.md](../../CONTRIBUTING.md).
 Setup:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -e ".[dev,train]"
+uv sync --locked --extra dev --extra train
 ```
 
 Rules:
@@ -28,7 +25,7 @@ Rules:
 1. Library code lives under `src/carve_lm/`.
 2. Runnable examples go under `examples/`; operational scripts go under `scripts/`.
 3. Add or update tests for any behavior change.
-4. Run `ruff check .` and `pytest` before opening a PR.
+4. Run `uv run ruff check .` and `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest` before opening a PR.
 
 ## Pull Request Guidelines
 
@@ -38,7 +35,7 @@ Per [CONTRIBUTING.md](../../CONTRIBUTING.md):
 2. Call out any breaking API changes.
 3. Include validation details such as `pytest` and `ruff` output.
 
-Recent commit-message style is short and intent-oriented (`refactor: adapters`, `add support for Qwen2.5-VL, not test yet`). Match it.
+Recent commit-message style is short and intent-oriented (`refactor: adapters`, `add support for Qwen2.5-VL`). Match it.
 
 ## CI/CD Status
 
@@ -59,7 +56,7 @@ Pipeline file: [.github/workflows/ci.yml](../../.github/workflows/ci.yml).
 
 CI uses `uv run ruff check .` and `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest` so host-level pytest plugins do not affect repository tests.
 
-No release / publish workflow is configured. `twine` is available in the `[dev]` extra for manual PyPI uploads.
+No release / publish workflow is configured. `twine` is available in the `[dev]` extra for manual PyPI uploads; see [docs/release.md](../release.md).
 
 ## Licensing
 

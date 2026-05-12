@@ -14,6 +14,7 @@ import pytest
         "scripts.recovery.finetune_llama",
         "scripts.recovery.finetune_qwen",
         "scripts.recovery.teacher_correction_accelerate",
+        "scripts.validation.validate_real_qwen_vlm",
     ],
 )
 def test_examples_and_recovery_scripts_import_without_side_effects(module_name):

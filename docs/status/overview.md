@@ -65,8 +65,8 @@ pip install -e ".[notebooks]"
 Run lint and tests:
 
 ```bash
-ruff check .
-pytest
+uv run ruff check .
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest
 ```
 
 Minimal usage:
