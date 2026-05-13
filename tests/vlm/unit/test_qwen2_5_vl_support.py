@@ -302,7 +302,7 @@ def test_qwen2_5_vl_bridge_pruning_aligns_merger_output_and_language_hidden_chan
     )
     context = pruner.discover()
     scores = {
-        group.group_id: (10.0 if group.group_id == "channel.bundle1" else 0.0)
+        group.group_id: (10.0 if group.local_idx in {1, 3, 5, 7} else 0.0)
         for group in context.groups
     }
 
