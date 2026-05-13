@@ -79,6 +79,10 @@ class Qwen2_5_VLModelAdapter(DecoderModelAdapter):
         self.ensure_supported(model)
         _patch_decoder_config(model.config, "num_hidden_layers", num_hidden_layers)
 
+    def uses_hidden_stream_channel_pruning(self, model: nn.Module | None = None) -> bool:
+        del model
+        return True
+
     @staticmethod
     def set_num_attention_heads(config, value: int) -> None:
         _patch_decoder_config(config, "num_attention_heads", value)
